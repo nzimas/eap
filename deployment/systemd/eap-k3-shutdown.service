@@ -1,0 +1,13 @@
+[Unit]
+Description=Electroacoustic Playground Fates K3 graceful shutdown
+After=eap-console-status.service
+Wants=eap-console-status.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/eap-k3-shutdown
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

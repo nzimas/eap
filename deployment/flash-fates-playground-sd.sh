@@ -93,6 +93,7 @@ dtparam=i2s=on
 dtoverlay=i2s-mmap
 enable_uart=1
 dtoverlay=rpi-proto
+dtoverlay=fates-buttons-4encoders
 dtoverlay=fates-ssd1322,rotate=180
 dtparam=audio=off
 CONFIG_EOF
