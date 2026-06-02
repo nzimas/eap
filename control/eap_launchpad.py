@@ -16,7 +16,7 @@ from dataclasses import dataclass
 BOTTOM_ROW_NOTES = tuple(range(11, 19))
 MATRIX_NOTES = tuple((row * 10) + col for row in range(1, 9) for col in range(1, 9))
 REVERB_CC = 91
-MASTER_CC = 99
+MASTER_CC = 89
 LONG_PRESS_SECONDS = float(os.environ.get("EAP_LONG_PRESS_SECONDS", "0.65"))
 MIDI_IN = os.environ.get("EAP_LAUNCHPAD_IN", "")
 MIDI_OUT = os.environ.get("EAP_LAUNCHPAD_OUT", "")
