@@ -40,6 +40,7 @@ RGB_MASTER_VALUE = (72, 22, 0)
 RGB_MASTER_TOP = (104, 38, 0)
 RGB_SESSION_SAVED = (54, 0, 80)
 RGB_SESSION_SAVING = (112, 34, 126)
+RGB_SESSION_ACTIVE = (126, 76, 126)
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -294,6 +295,9 @@ def load_session_index() -> dict:
     slots = data.get("slots")
     if not isinstance(slots, dict):
         data["slots"] = {}
+    active_slot = data.get("active_slot")
+    if not isinstance(active_slot, int) or not 1 <= active_slot <= 64:
+        data["active_slot"] = None
     return data
 
 
@@ -329,9 +333,13 @@ def restore_session_snapshot(
 
 def paint_session_page(index: dict) -> None:
     saved = index.get("slots", {})
+    active_slot = index.get("active_slot")
     for note in MATRIX_NOTES:
         slot = session_slot_for_note(note)
-        colour = RGB_SESSION_SAVED if str(slot) in saved else (0, 0, 0)
+        if slot == active_slot and str(slot) in saved:
+            colour = RGB_SESSION_ACTIVE
+        else:
+            colour = RGB_SESSION_SAVED if str(slot) in saved else (0, 0, 0)
         send_led(note, colour)
 
 
@@ -363,11 +371,14 @@ def handle_session_release(
         blink_session_save(session_pad.note)
         send_session_osc(slot, 1)
         slots[key] = session_snapshot(pads, reverb_values, master_values)
+        session_index["active_slot"] = slot
         save_session_index(session_index)
         paint_session_page(session_index)
     elif key in slots:
         send_session_osc(slot, 0)
         restore_session_snapshot(slots[key], pads, reverb_values, master_values)
+        session_index["active_slot"] = slot
+        save_session_index(session_index)
         paint_session_page(session_index)
 
 
