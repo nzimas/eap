@@ -58,7 +58,7 @@
             lowCut = 120, highCut = 9500, modDepth = 0.08, bright = 0.75,
             masterVol = 0.82, overdrive = 0.0, bitDepth = 1.0, saturation = 0.12,
             compProfile = 0|
-            var dry, pre, verb, sig, driven, saturated, levels, degraded;
+            var dry, pre, verb, sig, driven, saturated, folded, grimy, sat, srFreq, levels, degraded;
             var profile, threshold, slopeAbove, clampTime, relaxTime, makeup;
             dry = LeakDC.ar(In.ar(in, 2));
             pre = HPF.ar(LPF.ar(dry, highCut.clip(1200, 18000)), lowCut.clip(20, 1200));
@@ -68,8 +68,14 @@
             sig = XFade2.ar(dry, verb, (wet.clip(0, 0.9) * 2) - 1);
             driven = tanh(sig * overdrive.linexp(0, 1, 1.0, 7.0));
             sig = XFade2.ar(sig, driven, (overdrive.clip(0, 1) * 2) - 1);
-            saturated = (sig * saturation.linexp(0, 1, 1.0, 4.8)).softclip;
-            sig = XFade2.ar(sig, saturated, (saturation.clip(0, 1) * 1.8) - 1);
+            sat = saturation.clip(0, 1);
+            saturated = sig + (sig.abs * sat.linlin(0, 1, 0.0, 0.36));
+            saturated = tanh(saturated * sat.linexp(0, 1, 1.0, 13.0));
+            folded = Fold.ar(saturated * sat.linlin(0, 1, 1.0, 4.2), -0.58, 0.58);
+            srFreq = sat.linexp(0, 1, 48000, 2600);
+            grimy = Latch.ar(folded, Impulse.ar(srFreq));
+            grimy = HPF.ar(LPF.ar(grimy, sat.linexp(0, 1, 15000, 3800)), sat.linexp(0, 1, 18, 160));
+            sig = XFade2.ar(sig, LeakDC.ar(grimy) * sat.linlin(0, 1, 1.0, 0.78), (sat * 2) - 1);
             levels = 2.pow(bitDepth.clip(0, 1).linlin(0, 1, 1, 24)).max(2);
             degraded = ((sig * 0.5 + 0.5) * levels).round / levels;
             degraded = (degraded - 0.5) * 2;
