@@ -1,7 +1,8 @@
 [Unit]
 Description=Electroacoustic Playground Launchpad controller
-After=eap-supercollider.service
+After=sound.target eap-supercollider.service
 Requires=eap-supercollider.service
+Wants=sound.target
 
 [Service]
 Type=simple

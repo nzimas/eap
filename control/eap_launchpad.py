@@ -29,6 +29,7 @@ SESSION_INDEX_PATH = os.environ.get(
     "EAP_SESSION_INDEX",
     "/home/we/.local/share/eap-launchpad/sessions.json",
 )
+PROGRAMMER_MODE_SYSEX = "F0 00 20 29 02 0D 0E 01 F7"
 
 RGB_BLANK = (12, 12, 12)
 RGB_ACTIVE = (0, 72, 12)
@@ -159,6 +160,20 @@ def send_led(note: int, rgb: tuple[int, int, int]) -> None:
         stdout=sys.stderr,
         stderr=sys.stderr,
     )
+
+
+def send_sysex(payload: str) -> None:
+    subprocess.run(
+        ["amidi", "-p", MIDI_OUT, "-S", payload],
+        check=False,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+    )
+
+
+def enter_programmer_mode() -> None:
+    send_sysex(PROGRAMMER_MODE_SYSEX)
+    time.sleep(0.08)
 
 
 def colour_for_state(state: int) -> tuple[int, int, int]:
@@ -442,6 +457,7 @@ def main() -> int:
     global MIDI_IN, MIDI_OUT
     MIDI_IN = resolve_midi_in()
     MIDI_OUT = resolve_midi_out()
+    enter_programmer_mode()
 
     pads = {note: Pad(note) for note in BOTTOM_ROW_NOTES}
     session_pads = {note: SessionPad(note) for note in MATRIX_NOTES}
