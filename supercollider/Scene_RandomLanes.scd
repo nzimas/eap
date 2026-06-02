@@ -20,10 +20,12 @@
     ~scales = [
         [0, 2, 3, 7, 9],
         [0, 2, 5, 7, 10],
-        [0, 1, 3, 6, 7, 10],
         [0, 2, 5, 7, 9],
-        [0, 3, 5, 8, 10]
+        [0, 3, 5, 7, 10],
+        [0, 2, 4, 7, 9]
     ];
+
+    ~plaitsModelPool = [0, 1, 3, 4, 5, 6, 11, 12];
 
     ~pedalCandidates = [
         \chorus, \phaser, \vibrato, \tremolo, \delay, \reverb,
@@ -142,11 +144,7 @@
             ]);
             env = EnvGen.kr(Env.linen(envAttack, envDecay + (envSustain * 2.0), envRelease), doneAction: 2);
             filterEnv = EnvGen.kr(Env.perc(envAttack, envDecay.max(0.05), curve: -4), gate: 1);
-            freqModRatio = ((lfo * freqModLfo) + (filterEnv * freqModEnv));
-            freqModRatio = Select.kr(freqModRatio >= 0, [
-                freqModRatio.linlin(-2, 0, 0.25, 1),
-                freqModRatio.linlin(0, 2, 1, 4)
-            ]);
+            freqModRatio = ((lfo * freqModLfo) + (filterEnv * freqModEnv)).clip(-0.35, 0.35).midiratio;
             freq = (freq * freqModRatio).clip(20, SampleRate.ir * 0.45);
             mainDrift = LFNoise2.kr(0.1, 0.001, 1);
             subDrift = LFNoise2.kr(0.1, 0.0008, 1);
@@ -247,16 +245,16 @@
             restProb: self[\rand].value(self, 0.04, 0.38),
             volatility: self[\rand].value(self, 0.65, 1.6),
             amp: (0.20 / total.sqrt).clip(0.055, 0.18),
-            plaitsModels: Array.fill(rrand(1, 3), { rrand(0, 15) }),
+            plaitsModels: Array.fill(rrand(1, 3), { self[\plaitsModelPool].choose }),
             ringsModel: rrand(0, 3),
             molly: (
                 oscWaveShape: rrand(0, 2),
                 pwMod: self[\rand].value(self, 0.0, 0.7),
-                freqModLfo: self[\exprand].value(self, 0.0001, 0.12),
-                freqModEnv: self[\rand].value(self, -0.08, 0.18),
+                freqModLfo: self[\exprand].value(self, 0.0001, 0.16),
+                freqModEnv: self[\rand].value(self, -0.10, 0.18),
                 mainOscLevel: self[\rand].value(self, 0.55, 1.0),
                 subOscLevel: self[\rand].value(self, 0.0, 0.85),
-                subOscDetune: self[\rand].value(self, -12.0, 12.0),
+                subOscDetune: [-0.10, -0.05, 0, 0, 0, 0.05, 0.10].choose,
                 noiseLevel: self[\exprand].value(self, 0.001, 0.45),
                 hpFilterCutoff: self[\exprand].value(self, 10, 700),
                 lpFilterCutoff: self[\exprand].value(self, 280, 9000),
@@ -269,17 +267,17 @@
                 envDecay: self[\exprand].value(self, 0.05, 3.5),
                 envSustain: self[\rand].value(self, 0.0, 0.85),
                 envRelease: self[\exprand].value(self, 0.08, 4.5),
-                ringModFreq: self[\exprand].value(self, 28, 1200),
-                ringModMix: [0, self[\rand].value(self, 0.02, 0.7)].choose,
+                ringModFreq: [0.5, 1, 1.5, 2].choose,
+                ringModMix: [0, 0, self[\rand].value(self, 0.02, 0.18)].choose,
                 ampMod: self[\rand].value(self, 0.0, 0.45)
             ),
             passersby: (
                 waveShape: self[\rand].value(self, 0.05, 0.98),
                 waveFolds: self[\rand].value(self, 0.0, 2.8),
-                fm1Ratio: [0.5, 0.666, 1, 1.5, 2].choose,
-                fm2Ratio: [1.5, 2, 3, 5, 7].choose,
-                fm1Amount: self[\rand].value(self, 0.0, 0.58),
-                fm2Amount: self[\rand].value(self, 0.0, 0.44),
+                fm1Ratio: [0.5, 0.75, 1, 1.5, 2].choose,
+                fm2Ratio: [1.5, 2, 3, 4].choose,
+                fm1Amount: self[\rand].value(self, 0.0, 0.28),
+                fm2Amount: self[\rand].value(self, 0.0, 0.22),
                 attack: self[\exprand].value(self, 0.004, 2.4),
                 peak: self[\exprand].value(self, 450, 9000),
                 decay: self[\exprand].value(self, 0.08, 6.5),
@@ -601,6 +599,8 @@
     };
 
     ~prepareLoadedLane = { |self, lane, index|
+        var m = lane[\molly];
+        var p = lane[\passersby];
         lane[\index] = index + 1;
         lane[\slot] = index + 1;
         lane[\group] = nil;
@@ -612,6 +612,22 @@
         lane[\routine] = nil;
         lane[\restProb] = lane[\restProb] ? 0.18;
         lane[\volatility] = lane[\volatility] ? 1.0;
+        lane[\plaitsModels] = (lane[\plaitsModels] ? [0]).collect({ |model|
+            if(self[\plaitsModelPool].includes(model), { model }, { self[\plaitsModelPool].choose });
+        });
+        if(m.notNil) {
+            m[\freqModLfo] = (m[\freqModLfo] ? 0).clip(0, 0.16);
+            m[\freqModEnv] = (m[\freqModEnv] ? 0).clip(-0.10, 0.18);
+            m[\subOscDetune] = if((m[\subOscDetune] ? 0).abs > 0.15, { 0 }, { m[\subOscDetune] ? 0 });
+            m[\ringModFreq] = if((m[\ringModFreq] ? 0) > 20, { [0.5, 1, 1.5, 2].choose }, { m[\ringModFreq] ? 1 });
+            m[\ringModMix] = (m[\ringModMix] ? 0).clip(0, 0.18);
+        };
+        if(p.notNil) {
+            p[\fm1Ratio] = if([0.5, 0.75, 1, 1.5, 2].includes(p[\fm1Ratio]), { p[\fm1Ratio] }, { 1 });
+            p[\fm2Ratio] = if([1.5, 2, 3, 4].includes(p[\fm2Ratio]), { p[\fm2Ratio] }, { 2 });
+            p[\fm1Amount] = (p[\fm1Amount] ? 0).clip(0, 0.28);
+            p[\fm2Amount] = (p[\fm2Amount] ? 0).clip(0, 0.22);
+        };
         lane;
     };
 
