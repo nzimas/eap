@@ -34,6 +34,12 @@ def send_reverb(param: int, value: int, host: str = "127.0.0.1", port: int = 571
         sock.sendto(packet, (host, port))
 
 
+def send_master(param: int, value: int, host: str = "127.0.0.1", port: int = 57120) -> None:
+    packet = _osc_string("/eap/master") + _osc_string(",ii") + _osc_int(param) + _osc_int(value)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (host, port))
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="eap")
     parser.add_argument(
@@ -57,7 +63,8 @@ def main(argv: list[str]) -> int:
         help="With --slot, replace that slot with a fresh random scene.",
     )
     parser.add_argument("--reverb-param", type=int, help="Set master reverb parameter column, 1-8.")
-    parser.add_argument("--value", type=int, default=64, help="Value for --reverb-param, 0-127.")
+    parser.add_argument("--master-param", type=int, help="Set master dynamics/degradation parameter column, 1-5.")
+    parser.add_argument("--value", type=int, default=64, help="Value for --reverb-param or --master-param, 0-127.")
     args = parser.parse_args(argv)
     scene_count = max(1, min(args.n, 8))
 
@@ -66,6 +73,13 @@ def main(argv: list[str]) -> int:
         value = max(0, min(args.value, 127))
         send_reverb(param, value, args.host, args.port)
         print(f"set reverb param {param}: {value}")
+        return 0
+
+    if args.master_param is not None:
+        param = max(1, min(args.master_param, 5))
+        value = max(0, min(args.value, 127))
+        send_master(param, value, args.host, args.port)
+        print(f"set master param {param}: {value}")
         return 0
 
     if args.slot is not None:

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 BOTTOM_ROW_NOTES = tuple(range(11, 19))
 MATRIX_NOTES = tuple((row * 10) + col for row in range(1, 9) for col in range(1, 9))
 REVERB_CC = 91
+MASTER_CC = 99
 LONG_PRESS_SECONDS = float(os.environ.get("EAP_LONG_PRESS_SECONDS", "0.65"))
 MIDI_IN = os.environ.get("EAP_LAUNCHPAD_IN", "")
 MIDI_OUT = os.environ.get("EAP_LAUNCHPAD_OUT", "")
@@ -28,6 +29,9 @@ RGB_MUTED = (38, 30, 0)
 RGB_REVERB_DIM = (4, 10, 18)
 RGB_REVERB_VALUE = (0, 50, 86)
 RGB_REVERB_TOP = (0, 84, 102)
+RGB_MASTER_DIM = (16, 6, 3)
+RGB_MASTER_VALUE = (72, 22, 0)
+RGB_MASTER_TOP = (104, 38, 0)
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -59,6 +63,13 @@ def send_slot_osc(slot: int, action: int) -> None:
 
 def send_reverb_osc(param: int, value: int) -> None:
     packet = osc_string("/eap/reverb") + osc_string(",ii")
+    packet += struct.pack(">ii", int(param), int(value))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_master_osc(param: int, value: int) -> None:
+    packet = osc_string("/eap/master") + osc_string(",ii")
     packet += struct.pack(">ii", int(param), int(value))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
@@ -213,6 +224,38 @@ def handle_reverb_note(note: int, values: list[int]) -> None:
     paint_reverb_page(values)
 
 
+def paint_master_page(values: list[int]) -> None:
+    for note in MATRIX_NOTES:
+        position = matrix_position(note)
+        if position is None:
+            continue
+        row, col = position
+        if col > 5:
+            send_led(note, (0, 0, 0))
+            continue
+        current_row = 1 + round((values[col - 1] / 127) * 7)
+        if row == current_row:
+            colour = RGB_MASTER_TOP
+        elif row < current_row:
+            colour = RGB_MASTER_VALUE
+        else:
+            colour = RGB_MASTER_DIM
+        send_led(note, colour)
+
+
+def handle_master_note(note: int, values: list[int]) -> None:
+    position = matrix_position(note)
+    if position is None:
+        return
+    row, col = position
+    if col > 5:
+        return
+    value = round(((row - 1) / 7) * 127)
+    values[col - 1] = value
+    send_master_osc(col, value)
+    paint_master_page(values)
+
+
 def main() -> int:
     global MIDI_IN, MIDI_OUT
     MIDI_IN = resolve_midi_in()
@@ -220,6 +263,7 @@ def main() -> int:
 
     pads = {note: Pad(note) for note in BOTTOM_ROW_NOTES}
     reverb_values = [31, 70, 57, 46, 32, 94, 31, 79]
+    master_values = [104, 0, 127, 15, 0]
     mode = "scene"
     paint_scene_page(pads)
 
@@ -247,12 +291,23 @@ def main() -> int:
                     elif value == 0 and mode != "scene":
                         mode = "scene"
                         paint_scene_page(pads)
+                elif controller == MASTER_CC:
+                    if value > 0 and mode != "master":
+                        mode = "master"
+                        paint_master_page(master_values)
+                    elif value == 0 and mode != "scene":
+                        mode = "scene"
+                        paint_scene_page(pads)
                 continue
 
             note = data
             if mode == "reverb":
                 if kind == "on":
                     handle_reverb_note(note, reverb_values)
+                continue
+            if mode == "master":
+                if kind == "on":
+                    handle_master_note(note, master_values)
                 continue
 
             pad = pads.get(note)

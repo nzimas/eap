@@ -48,6 +48,12 @@ s.waitForBoot({
         ~eapScenes[\setReverb].value(~eapScenes, param, value);
     }, '/eap/reverb');
 
+    OSCdef(\eapMasterDynamics, { |msg|
+        var param = (msg[1] ? 1).asInteger.clip(1, 5);
+        var value = ((msg[2] ? 0).asInteger / 127).clip(0, 1);
+        ~eapScenes[\setMaster].value(~eapScenes, param, value);
+    }, '/eap/master');
+
     // Backward-compatible controls: names are intentionally ignored.
     OSCdef(\eapSceneTrigger, { |msg|
         var count = (msg[2] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);

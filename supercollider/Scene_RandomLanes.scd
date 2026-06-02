@@ -11,6 +11,7 @@
     ~masterBus = nil;
     ~masterSynth = nil;
     ~reverbValues = nil;
+    ~masterValues = nil;
     ~lanes = List.new;
     ~slots = nil;
     ~cloudLaneIndex = nil;
@@ -53,15 +54,33 @@
 
         SynthDef(\eapSceneMaster, { |in = 0, out = 0, amp = 0.86,
             wet = 0.24, room = 0.55, damp = 0.45, decay = 3.2,
-            lowCut = 120, highCut = 9500, modDepth = 0.08, bright = 0.75|
-            var dry, pre, verb, sig;
+            lowCut = 120, highCut = 9500, modDepth = 0.08, bright = 0.75,
+            masterVol = 0.82, overdrive = 0.0, bitDepth = 1.0, saturation = 0.12,
+            compProfile = 0|
+            var dry, pre, verb, sig, driven, saturated, levels, degraded;
+            var profile, threshold, slopeAbove, clampTime, relaxTime, makeup;
             dry = LeakDC.ar(In.ar(in, 2));
             pre = HPF.ar(LPF.ar(dry, highCut.clip(1200, 18000)), lowCut.clip(20, 1200));
             verb = JPverb.ar(pre, decay.clip(0.7, 12), damp.clip(0.05, 0.95),
                 room.clip(0.15, 1.2), 0.72, modDepth.clip(0.0, 0.6), 2.0,
                 1, bright.clip(0.1, 1.2), 1, lowCut.clip(20, 1200), highCut.clip(1200, 18000));
             sig = XFade2.ar(dry, verb, (wet.clip(0, 0.9) * 2) - 1);
-            sig = Limiter.ar(sig * amp, 0.92, 0.01);
+            driven = tanh(sig * overdrive.linexp(0, 1, 1.0, 7.0));
+            sig = XFade2.ar(sig, driven, (overdrive.clip(0, 1) * 2) - 1);
+            saturated = (sig * saturation.linexp(0, 1, 1.0, 4.8)).softclip;
+            sig = XFade2.ar(sig, saturated, (saturation.clip(0, 1) * 1.8) - 1);
+            levels = 2.pow(bitDepth.clip(0, 1).linlin(0, 1, 1, 24)).max(2);
+            degraded = ((sig * 0.5 + 0.5) * levels).round / levels;
+            degraded = (degraded - 0.5) * 2;
+            sig = XFade2.ar(degraded, sig, (bitDepth.clip(0, 1) * 2) - 1);
+            profile = compProfile.clip(0, 7);
+            threshold = Select.kr(profile, [0.82, 0.72, 0.62, 0.52, 0.42, 0.34, 0.26, 0.20]);
+            slopeAbove = Select.kr(profile, [0.82, 0.70, 0.58, 0.46, 0.34, 0.25, 0.17, 0.11]);
+            clampTime = Select.kr(profile, [0.030, 0.024, 0.018, 0.014, 0.010, 0.007, 0.004, 0.002]);
+            relaxTime = Select.kr(profile, [0.360, 0.300, 0.240, 0.190, 0.145, 0.105, 0.075, 0.050]);
+            makeup = Select.kr(profile, [1.00, 1.06, 1.13, 1.22, 1.34, 1.50, 1.74, 2.05]);
+            sig = Compander.ar(sig, sig, threshold, 1, slopeAbove, clampTime, relaxTime) * makeup;
+            sig = Limiter.ar(sig * masterVol.clip(0, 1) * amp, 0.98, 0.01);
             Out.ar(out, sig);
         }).add;
 
@@ -487,6 +506,35 @@
         });
     };
 
+    ~masterArg = { |self, param, value|
+        var v = value.asFloat.clip(0, 1);
+        switch(param,
+            1, { [\masterVol, v.linlin(0, 1, 0.0, 1.0)] },
+            2, { [\overdrive, v] },
+            3, { [\bitDepth, v] },
+            4, { [\saturation, v] },
+            5, { [\compProfile, (v * 7).round(1).asInteger.clip(0, 7)] },
+            { nil }
+        );
+    };
+
+    ~setMaster = { |self, param, value|
+        var index = param.asInteger.clip(1, 5);
+        var v = value.asFloat.clip(0, 1);
+        var controlArg = self[\masterArg].value(self, index, v);
+        self[\masterValues][index - 1] = v;
+        if(self[\masterSynth].notNil and: { controlArg.notNil }) {
+            self[\masterSynth].set(controlArg[0], controlArg[1]);
+        };
+        ("EAP master dynamics param " ++ index ++ " = " ++ v.round(0.001)).postln;
+    };
+
+    ~applyMaster = { |self|
+        self[\masterValues].do({ |value, index|
+            self[\setMaster].value(self, index + 1, value);
+        });
+    };
+
     ~clear = { |self|
         self[\slots].do({ |lane| self[\stopLane].value(self, lane, \blank); });
         self[\lanes].clear;
@@ -573,8 +621,10 @@
         self[\makeSynthDefs].value(self);
         s.sync;
         self[\reverbValues] = [0.24, 0.55, 0.45, 0.36, 0.25, 0.74, 0.24, 0.62];
+        self[\masterValues] = [0.82, 0.0, 1.0, 0.12, 0.0];
         self[\masterSynth] = Synth.tail(self[\group], \eapSceneMaster, [\in, self[\masterBus].index, \out, 0]);
         self[\applyReverb].value(self);
+        self[\applyMaster].value(self);
         self[\slots] = Array.fill(self[\maxScenes], { nil });
         self[\lanes].clear;
         "EAP RandomScenes: started with blank slots".postln;
