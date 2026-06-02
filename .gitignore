@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Local build/download artifacts
+*.img
+*.img.zip
+*.iso
+*.xz
+
+# Local runtime scratch
+.codex/
+.agents/

@@ -1,0 +1,16 @@
+[Unit]
+Description=Electroacoustic Playground Launchpad controller
+After=eap-supercollider.service
+Requires=eap-supercollider.service
+
+[Service]
+Type=simple
+User=we
+Group=audio
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/local/bin/eap-launchpad
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

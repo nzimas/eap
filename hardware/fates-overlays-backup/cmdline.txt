@@ -1,0 +1,1 @@
+consoleblank=0 fbcon=map:1 console=serial0,115200 console=tty1 root=PARTUUID=df1a7d48-02 rootfstype=ext4 fsck.repair=yes rootwait
