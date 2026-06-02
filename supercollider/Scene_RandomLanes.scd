@@ -286,10 +286,19 @@
         });
     };
 
+    ~loadDexedPatch = { |self, seed = 1, channel = 0|
+        var cmd = "/usr/local/bin/eap-dexed-patch --seed " ++ seed.asInteger.asString
+            ++ " --channel " ++ channel.asInteger.clip(0, 15).asString;
+        var result = cmd.unixCmdGetStdOut.stripWhiteSpace;
+        if(result.notEmpty, { ("EAP " ++ result).postln; });
+        result;
+    };
+
     ~randomLane = { |self, index, total|
         var materialPool = [\plaits, \plaits, \rings, \fold, \molly, \molly, \passersby];
         var maxMaterials = self[\maxSourcesPerScene];
         var materialCount = if(total >= 7, { 1 }, { rrand(1, maxMaterials) });
+        var materials;
         var fx = if(total >= 5, {
             if((index == self[\cloudLaneIndex]) and: { self[\hasActiveCloud].value(self).not }, { \clouds }, { \pedalboard });
         }, {
@@ -299,14 +308,20 @@
         var minGap = if(total >= 7, { 1.15 }, { if(total >= 5, { 0.65 }, { 0.18 }) });
         var maxDensity = if(total >= 7, { 1.0 }, { if(total >= 5, { 1.15 }, { 1.45 }) });
         var phase = if(total >= 5, { self[\rand].value(self, 0.0, total * 0.7) }, { self[\rand].value(self, 0.0, 0.8) });
+        var dexedPatchSeed = rrand(1, 2147483000);
+        var dexedPatchInfo = "";
         if(self[\refreshDexed].value(self), {
             materialPool = materialPool ++ [\dexed, \dexed];
+        });
+        materials = Array.fill(materialCount, { materialPool.choose });
+        if(materials.includes(\dexed), {
+            dexedPatchInfo = self[\loadDexedPatch].value(self, dexedPatchSeed, index - 1);
         });
         (
             index: index,
             slot: index,
             total: total,
-            materials: Array.fill(materialCount, { materialPool.choose }),
+            materials: materials,
             fx: fx,
             scale: self[\scales].choose,
             register: register,
@@ -363,7 +378,9 @@
                 channel: (index - 1).clip(0, 15),
                 velocity: self[\rand].value(self, 54, 104).round(1),
                 durScale: self[\exprand].value(self, 0.35, 2.8),
-                octaveBias: [-12, 0, 0, 0, 12].choose
+                octaveBias: [-12, 0, 0, 0, 12].choose,
+                patchSeed: dexedPatchSeed,
+                patchInfo: dexedPatchInfo
             ),
             clouds: (
                 pit: [-12, -7, -5, 0, 7, 12].choose,
@@ -755,6 +772,8 @@
             d[\velocity] = (d[\velocity] ? 82).clip(24, 126);
             d[\durScale] = (d[\durScale] ? 1.0).clip(0.25, 3.5);
             d[\octaveBias] = if([-12, 0, 12].includes(d[\octaveBias]), { d[\octaveBias] }, { 0 });
+            d[\patchSeed] = d[\patchSeed] ? 0;
+            d[\patchInfo] = d[\patchInfo] ? "";
         };
         lane;
     };

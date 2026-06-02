@@ -31,3 +31,11 @@ After starting or restarting a headless Dexed host, run:
 ```sh
 eap --dexed-rescan
 ```
+
+Dexed patch selection uses a runtime cache built from DX7 `.syx` banks. To rebuild it from a local archive:
+
+```sh
+eap-build-dexed-cache /path/to/DX7_AllTheWeb.zip /opt/electroacoustic-playground/dexed/patch-cache
+```
+
+At scene creation, EAP chooses a cached bank/program and applies only tiny operator-output-level changes before sending the patch to Dexed.
