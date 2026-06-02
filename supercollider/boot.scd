@@ -67,6 +67,12 @@ s.waitForBoot({
         });
     }, '/eap/session');
 
+    OSCdef(\eapTuning, { |msg|
+        var scaleIndex = (msg[1] ? ~eapScenes[\scaleIndex]).asInteger.clip(0, 7);
+        var rootNote = (msg[2] ? ~eapScenes[\rootNote]).asInteger.clip(0, 11);
+        ~eapScenes[\setTuning].value(~eapScenes, scaleIndex, rootNote);
+    }, '/eap/tuning');
+
     // Backward-compatible controls: names are intentionally ignored.
     OSCdef(\eapSceneTrigger, { |msg|
         var count = (msg[2] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 BOTTOM_ROW_NOTES = tuple(range(11, 19))
 MATRIX_NOTES = tuple((row * 10) + col for row in range(1, 9) for col in range(1, 9))
 REVERB_CC = 91
+TUNING_CC = 92
 SESSION_CC = 98
 MASTER_CC = 89
 LONG_PRESS_SECONDS = float(os.environ.get("EAP_LONG_PRESS_SECONDS", "0.65"))
@@ -41,6 +42,11 @@ RGB_MASTER_TOP = (104, 38, 0)
 RGB_SESSION_SAVED = (54, 0, 80)
 RGB_SESSION_SAVING = (112, 34, 126)
 RGB_SESSION_ACTIVE = (126, 76, 126)
+RGB_TUNING_DIM = (5, 8, 16)
+RGB_TUNING_VALUE = (12, 42, 88)
+RGB_TUNING_SELECTED = (28, 108, 126)
+
+ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -93,6 +99,13 @@ def send_master_osc(param: int, value: int) -> None:
 def send_session_osc(slot: int, action: int) -> None:
     packet = osc_string("/eap/session") + osc_string(",ii")
     packet += struct.pack(">ii", int(slot), int(action))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_tuning_osc(scale: int, root: int) -> None:
+    packet = osc_string("/eap/tuning") + osc_string(",ii")
+    packet += struct.pack(">ii", int(scale), int(root))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
 
@@ -286,6 +299,36 @@ def handle_master_note(note: int, values: list[int]) -> None:
     paint_master_page(values)
 
 
+def paint_tuning_page(scale_index: int, root_index: int) -> None:
+    for note in MATRIX_NOTES:
+        position = matrix_position(note)
+        if position is None:
+            continue
+        row, col = position
+        if row == 8:
+            colour = RGB_TUNING_SELECTED if (col - 1) == scale_index else RGB_TUNING_VALUE
+        elif row == 7 and col <= 7:
+            colour = RGB_TUNING_SELECTED if (col - 1) == root_index else RGB_TUNING_DIM
+        else:
+            colour = (0, 0, 0)
+        send_led(note, colour)
+
+
+def handle_tuning_note(note: int, tuning_values: list[int]) -> None:
+    position = matrix_position(note)
+    if position is None:
+        return
+    row, col = position
+    if row == 8:
+        tuning_values[0] = col - 1
+    elif row == 7 and col <= 7:
+        tuning_values[1] = col - 1
+    else:
+        return
+    send_tuning_osc(tuning_values[0], ROOT_NOTES[tuning_values[1]])
+    paint_tuning_page(tuning_values[0], tuning_values[1])
+
+
 def load_session_index() -> dict:
     try:
         with open(SESSION_INDEX_PATH, "r", encoding="utf-8") as handle:
@@ -307,12 +350,18 @@ def save_session_index(index: dict) -> None:
         json.dump(index, handle, sort_keys=True)
 
 
-def session_snapshot(pads: dict[int, Pad], reverb_values: list[int], master_values: list[int]) -> dict:
+def session_snapshot(
+    pads: dict[int, Pad],
+    reverb_values: list[int],
+    master_values: list[int],
+    tuning_values: list[int],
+) -> dict:
     return {
         "saved_at": time.time(),
         "pads": [pads[note].state for note in BOTTOM_ROW_NOTES],
         "reverb": list(reverb_values),
         "master": list(master_values),
+        "tuning": list(tuning_values),
     }
 
 
@@ -321,14 +370,20 @@ def restore_session_snapshot(
     pads: dict[int, Pad],
     reverb_values: list[int],
     master_values: list[int],
+    tuning_values: list[int],
 ) -> None:
     for note, state in zip(BOTTOM_ROW_NOTES, data.get("pads", [])):
         if state in (STATE_BLANK, STATE_ACTIVE, STATE_MUTED):
             pads[note].state = state
-    for target, source in ((reverb_values, data.get("reverb", [])), (master_values, data.get("master", []))):
+    for target, source in (
+        (reverb_values, data.get("reverb", [])),
+        (master_values, data.get("master", [])),
+        (tuning_values, data.get("tuning", [])),
+    ):
         for index, value in enumerate(source[: len(target)]):
             if isinstance(value, int):
-                target[index] = max(0, min(value, 127))
+                limit = 7 if target is tuning_values and index == 0 else 6 if target is tuning_values else 127
+                target[index] = max(0, min(value, limit))
 
 
 def paint_session_page(index: dict) -> None:
@@ -355,6 +410,7 @@ def handle_session_release(
     pads: dict[int, Pad],
     reverb_values: list[int],
     master_values: list[int],
+    tuning_values: list[int],
 ) -> None:
     if session_pad.pressed_at is None:
         return
@@ -370,13 +426,13 @@ def handle_session_release(
     if held_for >= LONG_PRESS_SECONDS:
         blink_session_save(session_pad.note)
         send_session_osc(slot, 1)
-        slots[key] = session_snapshot(pads, reverb_values, master_values)
+        slots[key] = session_snapshot(pads, reverb_values, master_values, tuning_values)
         session_index["active_slot"] = slot
         save_session_index(session_index)
         paint_session_page(session_index)
     elif key in slots:
         send_session_osc(slot, 0)
-        restore_session_snapshot(slots[key], pads, reverb_values, master_values)
+        restore_session_snapshot(slots[key], pads, reverb_values, master_values, tuning_values)
         session_index["active_slot"] = slot
         save_session_index(session_index)
         paint_session_page(session_index)
@@ -392,6 +448,7 @@ def main() -> int:
     session_index = load_session_index()
     reverb_values = [31, 70, 57, 46, 32, 94, 31, 79]
     master_values = [104, 0, 127, 15, 0]
+    tuning_values = [0, 0]
     mode = "scene"
     paint_scene_page(pads)
 
@@ -416,6 +473,13 @@ def main() -> int:
                     if value > 0 and mode != "reverb":
                         mode = "reverb"
                         paint_reverb_page(reverb_values)
+                    elif value == 0 and mode != "scene":
+                        mode = "scene"
+                        paint_scene_page(pads)
+                elif controller == TUNING_CC:
+                    if value > 0 and mode != "tuning":
+                        mode = "tuning"
+                        paint_tuning_page(tuning_values[0], tuning_values[1])
                     elif value == 0 and mode != "scene":
                         mode = "scene"
                         paint_scene_page(pads)
@@ -444,6 +508,10 @@ def main() -> int:
                 if kind == "on":
                     handle_master_note(note, master_values)
                 continue
+            if mode == "tuning":
+                if kind == "on":
+                    handle_tuning_note(note, tuning_values)
+                continue
             if mode == "session":
                 session_pad = session_pads.get(note)
                 if session_pad is None:
@@ -451,7 +519,14 @@ def main() -> int:
                 if kind == "on":
                     session_pad.pressed_at = time.monotonic()
                 else:
-                    handle_session_release(session_pad, session_index, pads, reverb_values, master_values)
+                    handle_session_release(
+                        session_pad,
+                        session_index,
+                        pads,
+                        reverb_values,
+                        master_values,
+                        tuning_values,
+                    )
                 continue
 
             pad = pads.get(note)

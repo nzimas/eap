@@ -12,17 +12,22 @@
     ~masterSynth = nil;
     ~reverbValues = nil;
     ~masterValues = nil;
+    ~scaleIndex = 0;
+    ~rootNote = 0;
     ~sessionDir = "/home/we/.local/share/eap/sessions";
     ~lanes = List.new;
     ~slots = nil;
     ~cloudLaneIndex = nil;
 
     ~scales = [
-        [0, 2, 3, 7, 9],
-        [0, 2, 5, 7, 10],
-        [0, 2, 5, 7, 9],
-        [0, 3, 5, 7, 10],
-        [0, 2, 4, 7, 9]
+        (0..11),
+        [0, 2, 3, 5, 7, 8, 10],
+        [0, 2, 4, 5, 7, 9, 11],
+        [0, 2, 3, 5, 7, 9, 10],
+        [0, 2, 4, 6, 7, 9, 11],
+        [0, 1, 4, 6, 8, 10, 11],
+        [0, 2, 3, 7, 8],
+        [0, 3, 5, 7, 10]
     ];
 
     ~plaitsModelPool = [0, 1, 3, 4, 5, 6, 11, 12];
@@ -37,8 +42,10 @@
 
     ~choosePitch = { |self, lane|
         var reg = lane[\register];
+        var scale = self[\scales].wrapAt(self[\scaleIndex]);
+        var root = self[\rootNote].asInteger.clip(0, 11);
         var octave = rrand((reg[0] / 12).floor, (reg[1] / 12).floor);
-        var midi = (octave * 12) + lane[\scale].choose + [0, 0, 7, 12, -12].choose;
+        var midi = (octave * 12) + root + scale.choose + [0, 0, 7, 12, -12].choose;
         midi.clip(reg[0], reg[1]);
     };
 
@@ -589,6 +596,17 @@
         });
     };
 
+    ~setTuning = { |self, scaleIndex = nil, rootNote = nil|
+        if(scaleIndex.notNil) {
+            self[\scaleIndex] = scaleIndex.asInteger.clip(0, self[\scales].size - 1);
+        };
+        if(rootNote.notNil) {
+            self[\rootNote] = rootNote.asInteger.clip(0, 11);
+        };
+        ("EAP tuning scale=" ++ self[\scaleIndex] ++ " root=" ++ self[\rootNote]).postln;
+        1;
+    };
+
     ~sessionPath = { |self, slot|
         self[\sessionDir] ++ "/session-" ++ slot.asInteger.clip(1, 64).asString ++ ".archive";
     };
@@ -664,6 +682,8 @@
         (
             reverbValues: self[\reverbValues].copy,
             masterValues: self[\masterValues].copy,
+            scaleIndex: self[\scaleIndex],
+            rootNote: self[\rootNote],
             slots: self[\slots].collect({ |lane| self[\laneSnapshot].value(self, lane); })
         );
     };
@@ -689,6 +709,7 @@
             self[\clear].value(self);
             self[\reverbValues] = snapshot[\reverbValues].copy;
             self[\masterValues] = snapshot[\masterValues].copy;
+            self[\setTuning].value(self, snapshot[\scaleIndex] ? self[\scaleIndex], snapshot[\rootNote] ? self[\rootNote]);
             self[\applyReverb].value(self);
             self[\applyMaster].value(self);
             snapshot[\slots].do({ |lane, laneIndex|
