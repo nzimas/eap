@@ -177,9 +177,10 @@
         SynthDef(\eapLanePassersbyNote, { |out = 0, freq = 220, waveShape = 0.4,
             waveFolds = 1.0, fm1Ratio = 0.66, fm2Ratio = 3.3, fm1Amount = 0.12,
             fm2Amount = 0.08, attack = 0.02, peak = 3600, decay = 1.2,
-            reverbMix = 0.35, amp = 0.1, pan = 0|
-            var nyquist = SampleRate.ir * 0.5, signal, mod1, mod2, modFreq;
-            var sinOsc, triOsc, additiveOsc, additivePhase, filterEnvLow, env;
+            reverbMix = 0.35, foldMix = 0.5, body = 0.2, air = 0.01,
+            filterRq = 0.7, toneTilt = 0.5, amp = 0.1, pan = 0|
+            var nyquist = SampleRate.ir * 0.5, signal, folded, bodySig, airSig, mod1, mod2, modFreq;
+            var sinOsc, triOsc, additiveOsc, additivePhase, filterEnvLow, env, rq;
             fm1Amount = fm1Amount.squared;
             fm2Amount = fm2Amount.squared;
             mod1 = SinOsc.ar(freq * fm1Ratio * LFNoise2.kr(0.1, 0.001, 1), 0, fm1Amount * 22 * freq);
@@ -194,12 +195,17 @@
                     * (harmonic % 2 + waveShape.linlin(0.666666, 1, 0, 1)).min(1);
             });
             signal = LinSelectX.ar(waveShape.clip(0, 1) * 3, [sinOsc, triOsc, additiveOsc]);
-            signal = Fold.ar(signal * (1 + (waveFolds.clip(0, 3) * 2)), -0.5, 0.5);
-            signal = LPF.ar(signal, 12000) + PinkNoise.ar(0.002);
+            folded = Fold.ar(signal * (1 + (waveFolds.clip(0, 3) * 2)), -0.5, 0.5);
+            signal = XFade2.ar(signal, folded, (foldMix.clip(0, 1) * 2) - 1);
+            bodySig = SinOsc.ar(freq * 0.5, 0, body.clip(0, 1) * 0.22);
+            airSig = BPF.ar(PinkNoise.ar(air.clip(0, 0.08)), toneTilt.linexp(0, 1, 1800, 9500), 0.45);
+            signal = LPF.ar(signal + bodySig + airSig, toneTilt.linexp(0, 1, 4500, 15000));
             filterEnvLow = peak.min(300);
+            rq = filterRq.clip(0.18, 0.95);
             env = EnvGen.ar(Env([0, 1, 0], [attack.max(0.003), decay.max(0.03)], [4, -8]), doneAction: 2);
-            signal = RLPF.ar(signal, env.linlin(0, 1, filterEnvLow, peak.clip(120, 10000)), 0.9) * env;
-            Out.ar(out, Pan2.ar(tanh(signal * amp * 2.2).softclip, pan));
+            signal = RLPF.ar(signal, env.linlin(0, 1, filterEnvLow, peak.clip(120, 10000)), rq) * env;
+            signal = signal * (1 + (reverbMix.clip(0, 0.7) * 0.18));
+            Out.ar(out, Pan2.ar(tanh(signal * amp * 2.1).softclip, pan));
         }).add;
 
         SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, pit = 0, pos = 0.5,
@@ -249,27 +255,27 @@
             ringsModel: rrand(0, 3),
             molly: (
                 oscWaveShape: rrand(0, 2),
-                pwMod: self[\rand].value(self, 0.0, 0.7),
-                freqModLfo: self[\exprand].value(self, 0.0001, 0.16),
-                freqModEnv: self[\rand].value(self, -0.10, 0.18),
+                pwMod: self[\rand].value(self, 0.0, 0.28),
+                freqModLfo: self[\exprand].value(self, 0.0001, 0.045),
+                freqModEnv: self[\rand].value(self, -0.025, 0.055),
                 mainOscLevel: self[\rand].value(self, 0.55, 1.0),
-                subOscLevel: self[\rand].value(self, 0.0, 0.85),
+                subOscLevel: self[\rand].value(self, 0.0, 0.55),
                 subOscDetune: [-0.10, -0.05, 0, 0, 0, 0.05, 0.10].choose,
-                noiseLevel: self[\exprand].value(self, 0.001, 0.45),
+                noiseLevel: self[\exprand].value(self, 0.001, 0.16),
                 hpFilterCutoff: self[\exprand].value(self, 10, 700),
                 lpFilterCutoff: self[\exprand].value(self, 280, 9000),
-                lpFilterResonance: self[\rand].value(self, 0.08, 0.86),
-                lpFilterModEnv: self[\rand].value(self, -0.2, 0.9),
-                lpFilterTracking: self[\rand].value(self, 0.0, 1.0),
-                lfoFreq: self[\exprand].value(self, 0.04, 6.0),
-                lfoWaveShape: rrand(0, 4),
-                envAttack: self[\exprand].value(self, 0.003, 1.2),
-                envDecay: self[\exprand].value(self, 0.05, 3.5),
+                lpFilterResonance: self[\rand].value(self, 0.08, 0.48),
+                lpFilterModEnv: self[\rand].value(self, 0.0, 0.24),
+                lpFilterTracking: self[\rand].value(self, 0.12, 0.58),
+                lfoFreq: self[\exprand].value(self, 0.04, 1.8),
+                lfoWaveShape: [0, 0, 1].choose,
+                envAttack: self[\exprand].value(self, 0.003, 0.38),
+                envDecay: self[\exprand].value(self, 0.08, 2.4),
                 envSustain: self[\rand].value(self, 0.0, 0.85),
                 envRelease: self[\exprand].value(self, 0.08, 4.5),
                 ringModFreq: [0.5, 1, 1.5, 2].choose,
-                ringModMix: [0, 0, self[\rand].value(self, 0.02, 0.18)].choose,
-                ampMod: self[\rand].value(self, 0.0, 0.45)
+                ringModMix: [0, 0, 0, self[\rand].value(self, 0.02, 0.10)].choose,
+                ampMod: self[\rand].value(self, 0.0, 0.24)
             ),
             passersby: (
                 waveShape: self[\rand].value(self, 0.05, 0.98),
@@ -281,7 +287,12 @@
                 attack: self[\exprand].value(self, 0.004, 2.4),
                 peak: self[\exprand].value(self, 450, 9000),
                 decay: self[\exprand].value(self, 0.08, 6.5),
-                reverbMix: self[\rand].value(self, 0.08, 0.78)
+                reverbMix: self[\rand].value(self, 0.02, 0.70),
+                foldMix: self[\rand].value(self, 0.0, 1.0),
+                body: self[\rand].value(self, 0.0, 0.85),
+                air: self[\exprand].value(self, 0.001, 0.055),
+                filterRq: self[\rand].value(self, 0.24, 0.92),
+                toneTilt: self[\rand].value(self, 0.0, 1.0)
             ),
             clouds: (
                 pit: [-12, -7, -5, 0, 7, 12].choose,
@@ -445,7 +456,9 @@
                     \fm1Ratio, p[\fm1Ratio], \fm2Ratio, p[\fm2Ratio],
                     \fm1Amount, p[\fm1Amount], \fm2Amount, p[\fm2Amount],
                     \attack, p[\attack], \peak, p[\peak], \decay, p[\decay] * decayScale,
-                    \reverbMix, p[\reverbMix], \amp, lane[\amp] * accent * 0.85,
+                    \reverbMix, p[\reverbMix], \foldMix, p[\foldMix], \body, p[\body],
+                    \air, p[\air], \filterRq, p[\filterRq], \toneTilt, p[\toneTilt],
+                    \amp, lane[\amp] * accent * 0.85,
                     \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
                 ]);
             };
@@ -616,17 +629,33 @@
             if(self[\plaitsModelPool].includes(model), { model }, { self[\plaitsModelPool].choose });
         });
         if(m.notNil) {
-            m[\freqModLfo] = (m[\freqModLfo] ? 0).clip(0, 0.16);
-            m[\freqModEnv] = (m[\freqModEnv] ? 0).clip(-0.10, 0.18);
+            m[\pwMod] = (m[\pwMod] ? 0).clip(0, 0.28);
+            m[\freqModLfo] = (m[\freqModLfo] ? 0).clip(0, 0.045);
+            m[\freqModEnv] = (m[\freqModEnv] ? 0).clip(-0.025, 0.055);
+            m[\subOscLevel] = (m[\subOscLevel] ? 0).clip(0, 0.55);
             m[\subOscDetune] = if((m[\subOscDetune] ? 0).abs > 0.15, { 0 }, { m[\subOscDetune] ? 0 });
+            m[\noiseLevel] = (m[\noiseLevel] ? 0).clip(0, 0.16);
+            m[\lpFilterResonance] = (m[\lpFilterResonance] ? 0.25).clip(0.08, 0.48);
+            m[\lpFilterModEnv] = (m[\lpFilterModEnv] ? 0).clip(0, 0.24);
+            m[\lpFilterTracking] = (m[\lpFilterTracking] ? 0.35).clip(0.12, 0.58);
+            m[\lfoFreq] = (m[\lfoFreq] ? 0.4).clip(0.04, 1.8);
+            m[\lfoWaveShape] = if([0, 1].includes(m[\lfoWaveShape]), { m[\lfoWaveShape] }, { 0 });
+            m[\envAttack] = (m[\envAttack] ? 0.01).clip(0.003, 0.38);
             m[\ringModFreq] = if((m[\ringModFreq] ? 0) > 20, { [0.5, 1, 1.5, 2].choose }, { m[\ringModFreq] ? 1 });
-            m[\ringModMix] = (m[\ringModMix] ? 0).clip(0, 0.18);
+            m[\ringModMix] = (m[\ringModMix] ? 0).clip(0, 0.10);
+            m[\ampMod] = (m[\ampMod] ? 0).clip(0, 0.24);
         };
         if(p.notNil) {
             p[\fm1Ratio] = if([0.5, 0.75, 1, 1.5, 2].includes(p[\fm1Ratio]), { p[\fm1Ratio] }, { 1 });
             p[\fm2Ratio] = if([1.5, 2, 3, 4].includes(p[\fm2Ratio]), { p[\fm2Ratio] }, { 2 });
             p[\fm1Amount] = (p[\fm1Amount] ? 0).clip(0, 0.28);
             p[\fm2Amount] = (p[\fm2Amount] ? 0).clip(0, 0.22);
+            p[\reverbMix] = (p[\reverbMix] ? 0.25).clip(0.02, 0.70);
+            p[\foldMix] = (p[\foldMix] ? 0.5).clip(0, 1);
+            p[\body] = (p[\body] ? 0.2).clip(0, 0.85);
+            p[\air] = (p[\air] ? 0.01).clip(0, 0.055);
+            p[\filterRq] = (p[\filterRq] ? 0.7).clip(0.24, 0.92);
+            p[\toneTilt] = (p[\toneTilt] ? 0.5).clip(0, 1);
         };
         lane;
     };
