@@ -65,16 +65,6 @@ launchpad_status() {
     fi
 }
 
-line_at() {
-    row="$1"
-    text="$2"
-    printf '\033[%s;1H%-32.32s' "$row" "$text"
-}
-
-previous_line_1=""
-previous_line_2=""
-previous_line_3=""
-
 printf '\033[2J\033[?25l\033[H' > "$tty"
 
 while true; do
@@ -82,17 +72,11 @@ while true; do
     line_2="CPU $(cpu_level) + RAM $(ram_level)"
     line_3="LP - $(launchpad_status)"
 
-    if [ "$line_1" != "$previous_line_1" ]; then
-        line_at 1 "$line_1" > "$tty"
-        previous_line_1="$line_1"
-    fi
-    if [ "$line_2" != "$previous_line_2" ]; then
-        line_at 2 "$line_2" > "$tty"
-        previous_line_2="$line_2"
-    fi
-    if [ "$line_3" != "$previous_line_3" ]; then
-        line_at 3 "$line_3" > "$tty"
-        previous_line_3="$line_3"
-    fi
+    {
+        printf '\033[H'
+        printf '%-32.32s\n' "$line_1"
+        printf '%-32.32s\n' "$line_2"
+        printf '%-32.32s\n' "$line_3"
+    } > "$tty"
     sleep "$interval_s"
 done
