@@ -12,6 +12,7 @@
     ~masterSynth = nil;
     ~reverbValues = nil;
     ~masterValues = nil;
+    ~sessionDir = "/home/we/.local/share/eap/sessions";
     ~lanes = List.new;
     ~slots = nil;
     ~cloudLaneIndex = nil;
@@ -532,6 +533,88 @@
     ~applyMaster = { |self|
         self[\masterValues].do({ |value, index|
             self[\setMaster].value(self, index + 1, value);
+        });
+    };
+
+    ~sessionPath = { |self, slot|
+        self[\sessionDir] ++ "/session-" ++ slot.asInteger.clip(1, 64).asString ++ ".archive";
+    };
+
+    ~laneSnapshot = { |self, lane|
+        if(lane.isNil, {
+            nil;
+        }, {
+            (
+                index: lane[\index], slot: lane[\slot], total: lane[\total],
+                materials: lane[\materials].copy, fx: lane[\fx],
+                scale: lane[\scale].copy, register: lane[\register].copy,
+                phase: lane[\phase], gap: lane[\gap], densitySkew: lane[\densitySkew],
+                amp: lane[\amp], plaitsModels: lane[\plaitsModels].copy,
+                ringsModel: lane[\ringsModel],
+                molly: lane[\molly].copy, passersby: lane[\passersby].copy,
+                clouds: lane[\clouds].copy, state: lane[\state]
+            );
+        });
+    };
+
+    ~prepareLoadedLane = { |self, lane, index|
+        lane[\index] = index + 1;
+        lane[\slot] = index + 1;
+        lane[\group] = nil;
+        lane[\sourceBus] = nil;
+        lane[\buses] = nil;
+        lane[\synths] = nil;
+        lane[\pedals] = nil;
+        lane[\outSynth] = nil;
+        lane[\routine] = nil;
+        lane;
+    };
+
+    ~sessionSnapshot = { |self|
+        (
+            reverbValues: self[\reverbValues].copy,
+            masterValues: self[\masterValues].copy,
+            slots: self[\slots].collect({ |lane| self[\laneSnapshot].value(self, lane); })
+        );
+    };
+
+    ~saveSession = { |self, slot|
+        var index = slot.asInteger.clip(1, 64);
+        var path = self[\sessionPath].value(self, index);
+        ("mkdir -p " ++ self[\sessionDir]).unixCmdGetStdOut;
+        self[\sessionSnapshot].value(self).writeArchive(path);
+        ("EAP session " ++ index ++ " saved").postln;
+        1;
+    };
+
+    ~loadSession = { |self, slot|
+        var index = slot.asInteger.clip(1, 64);
+        var path = self[\sessionPath].value(self, index);
+        var snapshot;
+        if(File.exists(path).not, {
+            ("EAP session " ++ index ++ " is blank").postln;
+            0;
+        }, {
+            snapshot = Object.readArchive(path);
+            self[\clear].value(self);
+            self[\reverbValues] = snapshot[\reverbValues].copy;
+            self[\masterValues] = snapshot[\masterValues].copy;
+            self[\applyReverb].value(self);
+            self[\applyMaster].value(self);
+            snapshot[\slots].do({ |lane, laneIndex|
+                if(lane.notNil) {
+                    self[\prepareLoadedLane].value(self, lane, laneIndex);
+                    self[\slots][laneIndex] = lane;
+                    self[\lanes].add(lane);
+                    if(lane[\state] == \active) {
+                        lane[\state] = \muted;
+                        self[\startLane].value(self, lane);
+                    };
+                };
+            });
+            self[\syncLoad].value(self);
+            ("EAP session " ++ index ++ " loaded").postln;
+            1;
         });
     };
 

@@ -54,6 +54,19 @@ s.waitForBoot({
         ~eapScenes[\setMaster].value(~eapScenes, param, value);
     }, '/eap/master');
 
+    OSCdef(\eapSession, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, 64);
+        var action = (msg[2] ? 0).asInteger;
+        var result;
+        if(action == 1, {
+            result = ~eapScenes[\saveSession].value(~eapScenes, slot);
+            ("EAP session OSC save: " ++ slot ++ " result=" ++ result).postln;
+        }, {
+            result = ~eapScenes[\loadSession].value(~eapScenes, slot);
+            ("EAP session OSC load: " ++ slot ++ " result=" ++ result).postln;
+        });
+    }, '/eap/session');
+
     // Backward-compatible controls: names are intentionally ignored.
     OSCdef(\eapSceneTrigger, { |msg|
         var count = (msg[2] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
