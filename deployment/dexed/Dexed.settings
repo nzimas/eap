@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PROPERTIES>
+  <VALUE name="audioSetup">
+    <DEVICESETUP deviceType="JACK"
+                 audioOutputDeviceName="system"
+                 audioInputDeviceName=""
+                 audioDeviceRate="48000"
+                 audioDeviceBufferSize="512"
+                 audioDeviceOutChans="11">
+      <MIDIINPUT name="out0" identifier="129-5"/>
+    </DEVICESETUP>
+  </VALUE>
+  <VALUE name="shouldMuteInput" val="0"/>
+</PROPERTIES>

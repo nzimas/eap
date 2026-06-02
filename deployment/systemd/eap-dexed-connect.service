@@ -1,0 +1,13 @@
+[Unit]
+Description=Electroacoustic Playground Dexed JACK wiring
+After=eap-jack.service eap-supercollider.service eap-dexed.service
+Requires=eap-jack.service eap-supercollider.service
+Wants=eap-dexed.service
+
+[Service]
+Type=oneshot
+User=we
+ExecStart=/usr/local/bin/eap-connect-dexed-jack 80 0.5
+
+[Install]
+WantedBy=multi-user.target

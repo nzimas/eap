@@ -4,7 +4,7 @@
 "Electroacoustic Playground: loading boot.scd".postln;
 
 s = Server.default;
-s.options.numInputBusChannels = 2;
+s.options.numInputBusChannels = 4;
 s.options.numOutputBusChannels = 2;
 s.options.sampleRate = 48000;
 s.options.blockSize = 128;
@@ -72,6 +72,11 @@ s.waitForBoot({
         var rootNote = (msg[2] ? ~eapScenes[\rootNote]).asInteger.clip(0, 11);
         ~eapScenes[\setTuning].value(~eapScenes, scaleIndex, rootNote);
     }, '/eap/tuning');
+
+    OSCdef(\eapDexedRescan, { |msg|
+        var result = ~eapScenes[\refreshDexed].value(~eapScenes);
+        ("EAP Dexed rescan result=" ++ result).postln;
+    }, '/eap/dexed/rescan');
 
     // Backward-compatible controls: names are intentionally ignored.
     OSCdef(\eapSceneTrigger, { |msg|

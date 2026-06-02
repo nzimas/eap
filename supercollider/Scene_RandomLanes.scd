@@ -10,8 +10,11 @@
     ~group = nil;
     ~masterBus = nil;
     ~masterSynth = nil;
+    ~externalInputSynth = nil;
     ~reverbValues = nil;
     ~masterValues = nil;
+    ~dexedMidi = nil;
+    ~dexedAvailable = false;
     ~scaleIndex = 0;
     ~rootNote = 0;
     ~sessionDir = "/home/we/.local/share/eap/sessions";
@@ -98,6 +101,12 @@
             sig = Compander.ar(sig, sig, threshold, 1, slopeAbove, clampTime, relaxTime) * makeup;
             sig = Limiter.ar(sig * masterVol.clip(0, 1) * amp, 0.98, 0.01);
             Out.ar(out, sig);
+        }).add;
+
+        SynthDef(\eapExternalInput, { |out = 0, amp = 0.70, fadeTime = 0.08|
+            var sig = SoundIn.ar([2, 3]);
+            sig = HPF.ar(LeakDC.ar(sig), 18);
+            Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime), 0.94, 0.01));
         }).add;
 
         SynthDef(\eapLanePlaitsNote, { |out = 0, pitch = 60, engine = 0, harm = 0.4,
@@ -231,6 +240,52 @@
         }).add;
     };
 
+    ~refreshDexed = { |self|
+        var destination;
+        var alsaState;
+        if(MIDIClient.initialized.not, { MIDIClient.init; });
+        destination = MIDIClient.destinations.detect({ |endpoint|
+            var label = (endpoint.device.asString ++ " " ++ endpoint.name.asString).toLower;
+            label.contains("dexed");
+        });
+        if(destination.notNil, {
+            if(self[\dexedMidi].isNil, {
+                self[\dexedMidi] = MIDIOut.newByName(destination.device, destination.name);
+                ("EAP Dexed MIDI connected: " ++ destination.device ++ " / " ++ destination.name).postln;
+            });
+            self[\dexedAvailable] = true;
+        }, {
+            alsaState = "aconnect -l 2>/dev/null".unixCmdGetStdOut.toLower;
+            if(alsaState.contains("dexed") and: { alsaState.contains("connected from") and: { alsaState.contains("supercollider") } }, {
+                if(self[\dexedMidi].isNil, {
+                    self[\dexedMidi] = MIDIOut(0);
+                    "EAP Dexed MIDI using SuperCollider out0 subscription".postln;
+                });
+                self[\dexedAvailable] = true;
+            }, {
+                if(self[\dexedAvailable], { "EAP Dexed MIDI route disappeared".postln; });
+                self[\dexedMidi] = nil;
+                self[\dexedAvailable] = false;
+            });
+        });
+        self[\dexedAvailable];
+    };
+
+    ~sendDexedNote = { |self, channel = 0, note = 60, velocity = 80, duration = 0.6|
+        var midi = self[\dexedMidi];
+        if(midi.isNil, { self[\refreshDexed].value(self); midi = self[\dexedMidi]; });
+        if(midi.notNil, {
+            var chan = channel.asInteger.clip(0, 15);
+            var pitch = note.asInteger.clip(0, 127);
+            var vel = velocity.asInteger.clip(1, 127);
+            midi.noteOn(chan, pitch, vel);
+            Routine({
+                duration.asFloat.clip(0.04, 12.0).wait;
+                midi.noteOff(chan, pitch, 0);
+            }).play(SystemClock);
+        });
+    };
+
     ~randomLane = { |self, index, total|
         var materialPool = [\plaits, \plaits, \rings, \fold, \molly, \molly, \passersby];
         var maxMaterials = self[\maxSourcesPerScene];
@@ -244,6 +299,9 @@
         var minGap = if(total >= 7, { 1.15 }, { if(total >= 5, { 0.65 }, { 0.18 }) });
         var maxDensity = if(total >= 7, { 1.0 }, { if(total >= 5, { 1.15 }, { 1.45 }) });
         var phase = if(total >= 5, { self[\rand].value(self, 0.0, total * 0.7) }, { self[\rand].value(self, 0.0, 0.8) });
+        if(self[\refreshDexed].value(self), {
+            materialPool = materialPool ++ [\dexed, \dexed];
+        });
         (
             index: index,
             slot: index,
@@ -300,6 +358,12 @@
                 air: self[\exprand].value(self, 0.001, 0.055),
                 filterRq: self[\rand].value(self, 0.24, 0.92),
                 toneTilt: self[\rand].value(self, 0.0, 1.0)
+            ),
+            dexed: (
+                channel: (index - 1).clip(0, 15),
+                velocity: self[\rand].value(self, 54, 104).round(1),
+                durScale: self[\exprand].value(self, 0.35, 2.8),
+                octaveBias: [-12, 0, 0, 0, 12].choose
             ),
             clouds: (
                 pit: [-12, -7, -5, 0, 7, 12].choose,
@@ -469,6 +533,15 @@
                     \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
                 ]);
             };
+            if(source == \dexed) {
+                var d = lane[\dexed];
+                self[\sendDexedNote].value(self,
+                    d[\channel] ? 0,
+                    (pitch + (d[\octaveBias] ? 0)).clip(lane[\register][0], lane[\register][1]),
+                    ((d[\velocity] ? 82) * accent).clip(24, 126),
+                    (lane[\gap] * (d[\durScale] ? 1.0) * decayScale).clip(0.08, 8.0)
+                );
+            };
         });
     };
 
@@ -624,6 +697,7 @@
                 amp: lane[\amp], plaitsModels: lane[\plaitsModels].copy,
                 ringsModel: lane[\ringsModel],
                 molly: lane[\molly].copy, passersby: lane[\passersby].copy,
+                dexed: lane[\dexed].copy,
                 clouds: lane[\clouds].copy, state: lane[\state]
             );
         });
@@ -632,6 +706,7 @@
     ~prepareLoadedLane = { |self, lane, index|
         var m = lane[\molly];
         var p = lane[\passersby];
+        var d = lane[\dexed];
         lane[\index] = index + 1;
         lane[\slot] = index + 1;
         lane[\group] = nil;
@@ -674,6 +749,12 @@
             p[\air] = (p[\air] ? 0.01).clip(0, 0.055);
             p[\filterRq] = (p[\filterRq] ? 0.7).clip(0.24, 0.92);
             p[\toneTilt] = (p[\toneTilt] ? 0.5).clip(0, 1);
+        };
+        if(d.notNil) {
+            d[\channel] = (d[\channel] ? index).clip(0, 15);
+            d[\velocity] = (d[\velocity] ? 82).clip(24, 126);
+            d[\durScale] = (d[\durScale] ? 1.0).clip(0.25, 3.5);
+            d[\octaveBias] = if([-12, 0, 12].includes(d[\octaveBias]), { d[\octaveBias] }, { 0 });
         };
         lane;
     };
@@ -814,8 +895,10 @@
         self[\masterBus] = Bus.audio(s, 2);
         self[\makeSynthDefs].value(self);
         s.sync;
+        self[\refreshDexed].value(self);
         self[\reverbValues] = [0.24, 0.55, 0.45, 0.36, 0.25, 0.74, 0.24, 0.62];
         self[\masterValues] = [0.82, 0.0, 1.0, 0.12, 0.0];
+        self[\externalInputSynth] = Synth.head(self[\group], \eapExternalInput, [\out, self[\masterBus].index]);
         self[\masterSynth] = Synth.tail(self[\group], \eapSceneMaster, [\in, self[\masterBus].index, \out, 0]);
         self[\applyReverb].value(self);
         self[\applyMaster].value(self);
@@ -826,6 +909,7 @@
 
     ~stop = { |self|
         self[\clear].value(self);
+        if(self[\externalInputSynth].notNil) { self[\externalInputSynth].free; self[\externalInputSynth] = nil; };
         if(self[\masterSynth].notNil) { self[\masterSynth].free; self[\masterSynth] = nil; };
         if(self[\masterBus].notNil) { self[\masterBus].free; self[\masterBus] = nil; };
         if(self[\group].notNil) { self[\group].free; self[\group] = nil; };
