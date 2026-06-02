@@ -244,6 +244,8 @@
             phase: phase,
             gap: self[\rand].value(self, minGap, 7.0),
             densitySkew: self[\rand].value(self, 0.72, maxDensity),
+            restProb: self[\rand].value(self, 0.04, 0.38),
+            volatility: self[\rand].value(self, 0.65, 1.6),
             amp: (0.20 / total.sqrt).clip(0.055, 0.18),
             plaitsModels: Array.fill(rrand(1, 3), { rrand(0, 15) }),
             ringsModel: rrand(0, 3),
@@ -359,18 +361,44 @@
         };
     };
 
-    ~triggerLane = { |self, lane|
-        lane[\materials].do({ |source|
-            var pitch = self[\choosePitch].value(self, lane);
+    ~lanePattern = { |self, lane|
+        var gap = lane[\gap].max(0.12);
+        var rest = lane[\restProb].clip(0.02, 0.55);
+        var volatility = lane[\volatility].clip(0.5, 2.0);
+        var phraseA = Pseq([0.25, 0.25, 0.5, 1.0] * gap, 1);
+        var phraseB = Pseq([0.125, 0.375, 0.25, 0.75, 1.5] * gap / volatility, 1);
+        var phraseC = Pshuf([0.18, 0.22, 0.33, 0.66, 1.25] * gap, 1);
+        var phraseD = Pseq([0.5, 0.25, 0.25, 0.125, 0.125, 1.0] * gap / volatility, 1);
+        Pbind(
+            \delta, (Pxrand([phraseA, phraseB, phraseC, phraseD], inf) / Pwhite(0.85, lane[\densitySkew].max(0.9), inf)).clip(0.055, 8.0),
+            \isRest, Pwrand([0, 1], [1 - rest, rest].normalizeSum, inf),
+            \accent, Pexprand(0.42, 1.65 * volatility, inf),
+            \transpose, Pwrand([0, 0, 0, 7, 12, -12, 5, -5], [0.35, 0.20, 0.12, 0.10, 0.08, 0.06, 0.05, 0.04].normalizeSum, inf),
+            \sourceCount, Pwrand([1, lane[\materials].size], [0.68, 0.32].normalizeSum, inf),
+            \panBias, Pwhite(-0.35, 0.35, inf),
+            \decayScale, Pexprand(0.55, 1.85, inf)
+        );
+    };
+
+    ~triggerLane = { |self, lane, event = nil|
+        var ev = event ? ();
+        var sourceCount = (ev[\sourceCount] ? lane[\materials].size).asInteger.clip(1, lane[\materials].size);
+        var sources = lane[\materials].scramble.keep(sourceCount);
+        var accent = (ev[\accent] ? 1).asFloat.clip(0.2, 2.0);
+        var transpose = (ev[\transpose] ? 0).asFloat;
+        var panBias = (ev[\panBias] ? 0).asFloat.clip(-0.5, 0.5);
+        var decayScale = (ev[\decayScale] ? 1).asFloat.clip(0.35, 2.4);
+        sources.do({ |source|
+            var pitch = (self[\choosePitch].value(self, lane) + transpose).clip(lane[\register][0], lane[\register][1]);
             if(source == \plaits) {
                 Synth.head(lane[\group], \eapLanePlaitsNote, [
                     \out, lane[\sourceBus].index,
                     \pitch, (pitch + [0, 0, 7, 12].choose).clip(lane[\register][0], lane[\register][1]),
                     \engine, lane[\plaitsModels].choose,
                     \harm, self[\rand].value(self, 0.05, 0.95), \timbre, self[\rand].value(self, 0.10, 0.98),
-                    \morph, self[\rand].value(self, 0.08, 0.98), \decay, self[\exprand].value(self, 0.08, 5.8),
-                    \colour, self[\rand].value(self, 0.15, 0.90), \amp, lane[\amp],
-                    \pan, self[\rand].value(self, -0.75, 0.75)
+                    \morph, self[\rand].value(self, 0.08, 0.98), \decay, self[\exprand].value(self, 0.08, 5.8) * decayScale,
+                    \colour, self[\rand].value(self, 0.15, 0.90), \amp, lane[\amp] * accent,
+                    \pan, (self[\rand].value(self, -0.75, 0.75) + panBias).clip(-1, 1)
                 ]);
             };
             if(source == \rings) {
@@ -379,15 +407,17 @@
                     \struct, self[\rand].value(self, 0.12, 0.88), \bright, self[\rand].value(self, 0.18, 0.95),
                     \damp, self[\rand].value(self, 0.25, 0.96), \pos, self[\rand].value(self, 0.10, 0.88),
                     \model, lane[\ringsModel], \poly, [1, 2, 4].choose,
-                    \amp, lane[\amp] * self[\rand].value(self, 0.70, 1.25), \pan, self[\rand].value(self, -0.65, 0.65)
+                    \amp, lane[\amp] * accent * self[\rand].value(self, 0.70, 1.25),
+                    \pan, (self[\rand].value(self, -0.65, 0.65) + panBias).clip(-1, 1)
                 ]);
             };
             if(source == \fold) {
                 Synth.head(lane[\group], \eapLaneFoldNote, [
                     \out, lane[\sourceBus].index, \freq, pitch.midicps,
                     \fold, self[\rand].value(self, 0.25, 2.8), \fm, self[\rand].value(self, 0.02, 0.60),
-                    \cutoff, self[\exprand].value(self, 450, 9000), \decay, self[\exprand].value(self, 0.10, 3.8),
-                    \amp, lane[\amp] * 0.75, \pan, self[\rand].value(self, -0.70, 0.70)
+                    \cutoff, self[\exprand].value(self, 450, 9000), \decay, self[\exprand].value(self, 0.10, 3.8) * decayScale,
+                    \amp, lane[\amp] * accent * 0.75,
+                    \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
                 ]);
             };
             if(source == \molly) {
@@ -405,7 +435,8 @@
                     \envDecay, m[\envDecay], \envSustain, m[\envSustain],
                     \envRelease, m[\envRelease], \ringModFreq, m[\ringModFreq],
                     \ringModMix, m[\ringModMix], \ampMod, m[\ampMod],
-                    \amp, lane[\amp] * 0.85, \pan, self[\rand].value(self, -0.70, 0.70)
+                    \amp, lane[\amp] * accent * 0.85,
+                    \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
                 ]);
             };
             if(source == \passersby) {
@@ -415,9 +446,9 @@
                     \waveShape, p[\waveShape], \waveFolds, p[\waveFolds],
                     \fm1Ratio, p[\fm1Ratio], \fm2Ratio, p[\fm2Ratio],
                     \fm1Amount, p[\fm1Amount], \fm2Amount, p[\fm2Amount],
-                    \attack, p[\attack], \peak, p[\peak], \decay, p[\decay],
-                    \reverbMix, p[\reverbMix], \amp, lane[\amp] * 0.85,
-                    \pan, self[\rand].value(self, -0.70, 0.70)
+                    \attack, p[\attack], \peak, p[\peak], \decay, p[\decay] * decayScale,
+                    \reverbMix, p[\reverbMix], \amp, lane[\amp] * accent * 0.85,
+                    \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
                 ]);
             };
         });
@@ -432,10 +463,15 @@
             lane[\synths] = List.new;
             self[\buildFx].value(self, lane, lane[\sourceBus]);
             lane[\routine] = Routine({
+                var stream = self[\lanePattern].value(self, lane).asStream;
+                var event;
                 lane[\phase].wait;
                 loop {
-                    self[\triggerLane].value(self, lane);
-                    (lane[\gap] * self[\rand].value(self, 0.55, 1.65) / lane[\densitySkew]).wait;
+                    event = stream.next(Event.new);
+                    if(event.notNil and: { (event[\isRest] ? 0).asInteger == 0 }) {
+                        self[\triggerLane].value(self, lane, event);
+                    };
+                    ((event[\delta] ? lane[\gap]).asFloat.max(0.055)).wait;
                 };
             }).play(SystemClock);
             lane[\state] = \active;
@@ -555,6 +591,7 @@
                 materials: lane[\materials].copy, fx: lane[\fx],
                 scale: lane[\scale].copy, register: lane[\register].copy,
                 phase: lane[\phase], gap: lane[\gap], densitySkew: lane[\densitySkew],
+                restProb: lane[\restProb], volatility: lane[\volatility],
                 amp: lane[\amp], plaitsModels: lane[\plaitsModels].copy,
                 ringsModel: lane[\ringsModel],
                 molly: lane[\molly].copy, passersby: lane[\passersby].copy,
@@ -573,6 +610,8 @@
         lane[\pedals] = nil;
         lane[\outSynth] = nil;
         lane[\routine] = nil;
+        lane[\restProb] = lane[\restProb] ? 0.18;
+        lane[\volatility] = lane[\volatility] ? 1.0;
         lane;
     };
 
