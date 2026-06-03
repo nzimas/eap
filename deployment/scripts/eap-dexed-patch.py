@@ -50,9 +50,26 @@ def find_dexed_port() -> str:
     raise RuntimeError("Dexed ALSA MIDI port not found")
 
 
+PERCUSSIVE_VOICE_RE = re.compile(
+    r"DRUM|PERC|KICK|SNAR|SNR|HAT|CYM|TOM|CLAP|BELL|PLUK|GUIT|BASS|"
+    r"EP|PIAN|ORG|CLV|BRASS|BRS|MTL|KEY|MAR|VIB|STEEL|WOOD|BON",
+    re.I,
+)
+
+
 def voice_name(bank: bytes, program: int) -> str:
     start = VOICE_DATA_START + (program * VOICE_SIZE) + VOICE_NAME_OFFSET
     return bank[start : start + 10].decode("ascii", errors="ignore").strip() or "UNKNOWN"
+
+
+def choose_program(rng: random.Random, bank: bytes, profile: str | None, program: int | None) -> int:
+    if program is not None:
+        return max(0, min(31, program))
+    if profile == "percussive":
+        candidates = [index for index in range(32) if PERCUSSIVE_VOICE_RE.search(voice_name(bank, index))]
+        if candidates:
+            return rng.choice(candidates)
+    return rng.randrange(32)
 
 
 def refresh_bulk_checksum(bank: bytearray) -> None:
@@ -86,6 +103,7 @@ def main() -> int:
     parser.add_argument("--program", type=int, default=None)
     parser.add_argument("--channel", type=int, default=0)
     parser.add_argument("--mutate", type=int, default=2)
+    parser.add_argument("--profile", default=None, choices=["percussive"])
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -93,13 +111,12 @@ def main() -> int:
     cache_dir = Path(args.cache_dir)
     banks = load_manifest(cache_dir)
     entry = rng.choice(banks)
-    program = args.program if args.program is not None else rng.randrange(32)
-    program = max(0, min(31, program))
     channel = max(0, min(15, args.channel))
     bank_path = cache_dir / "banks" / entry["bank"]
     bank = bytearray(bank_path.read_bytes())
     if len(bank) != DX7_BANK_SIZE:
         raise RuntimeError(f"invalid DX7 bank size: {bank_path}")
+    program = choose_program(rng, bank, args.profile, args.program)
     selected_voice = voice_name(bank, program)
     changed = gentle_mutation(bank, program, rng, max(0, min(4, args.mutate)))
     mod_wheel = rng.randrange(0, 13)

@@ -7,7 +7,7 @@ The current stack includes:
 - SuperCollider scene-slot engine with up to eight Launchpad-addressable scene slots.
 - Random scene generation from Plaits, Rings, Passersby, Molly, fold-based material, and optional external Dexed.
 - Per-scene pedalboard or Clouds-style effects, bounded for CPU safety.
-- Launchpad Mini Mk3 controller daemon with scene toggles, long-press regeneration, LED states, and a master reverb page.
+- Launchpad Mini Mk3 controller daemon with scene toggles, long-press regeneration, sound-type modifiers (CC 19/29/39/49), LED states, and auxiliary pages for reverb, tuning, master dynamics, and sessions.
 - Systemd units and deployment helpers for the Fates/Pi environment.
 
 Primary runtime files:
@@ -39,3 +39,16 @@ eap-build-dexed-cache /path/to/DX7_AllTheWeb.zip /opt/electroacoustic-playground
 ```
 
 At scene creation, EAP chooses a cached bank/program and applies only tiny operator-output-level changes before sending the patch to Dexed.
+
+## Sound-Type Modifiers
+
+Hold one of the four Up buttons while toggling or long-pressing a bottom-row scene pad to bias generation and regeneration:
+
+| CC | Character |
+|----|-----------|
+| 19 | Percussive — short envelopes, dense rhythms, punchy materials |
+| 29 | Drone / texture — low register, sparse events, clouds and sustain |
+| 39 | Harmonic pads — evolving chords, mid register, lush modulation |
+| 49 | Chaos — noisy FM, volatile timing, aggressive FX |
+
+Modifier buttons are lit orange; the held button highlights white. With no modifier held, scene generation uses the default random profile. OSC `/eap/slot` accepts an optional third integer argument (1–4) matching the table above.

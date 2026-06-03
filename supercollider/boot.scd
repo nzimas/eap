@@ -7,13 +7,13 @@ s = Server.default;
 s.options.numInputBusChannels = 4;
 s.options.numOutputBusChannels = 2;
 s.options.sampleRate = 48000;
-s.options.blockSize = 128;
-s.options.hardwareBufferSize = 128;
+s.options.blockSize = 256;
+s.options.hardwareBufferSize = 256;
 s.options.memSize = 262144;
 s.options.numWireBufs = 256;
 s.options.maxNodes = 8192;
 s.options.maxSynthDefs = 2048;
-s.latency = 0.05;
+s.latency = 0.1;
 
 s.waitForBoot({
     "Electroacoustic Playground: server booted".postln;
@@ -23,24 +23,56 @@ s.waitForBoot({
 
     ~eapScenes[\start].value(~eapScenes);
 
+    ~eapConnectJackOut = {
+        var ok = "/usr/local/bin/eap-connect-sc-jack 8 0.25".unixCmdGetStdOut.contains("connected");
+        if(ok.not, {
+            [
+                "jack_disconnect SuperCollider:out_1 system:playback_1",
+                "jack_disconnect SuperCollider:out_1 system:playback_2",
+                "jack_disconnect SuperCollider:out_2 system:playback_1",
+                "jack_disconnect SuperCollider:out_2 system:playback_2",
+                "jack_disconnect SuperCollider:out_2 SuperCollider:in_2",
+                "jack_connect SuperCollider:out_1 system:playback_1",
+                "jack_connect SuperCollider:out_2 system:playback_2"
+            ].do({ |cmd| cmd.unixCmdGetStdOut; });
+            "EAP JACK outputs connected to system playback (fallback)".postln;
+        });
+        ok;
+    };
+    Routine({
+        [1.0, 3.0, 8.0, 20.0].do({ |delay|
+            delay.wait;
+            if(~eapConnectJackOut.value.not, {
+                "EAP JACK connect retry at " ++ delay ++ "s".postln;
+            });
+        });
+    }).play(SystemClock);
+
     OSCdef(\eapRandomScenes, { |msg|
         var count = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
-        ~eapScenes[\seed].value(~eapScenes, count);
-        ("EAP manual random scene set: " ++ count).postln;
+        var modifier = if(msg.size > 2, { ~eapScenes[\modifierFromCode].value(~eapScenes, msg[2]) }, { nil });
+        ~eapScenes[\seed].value(~eapScenes, count, modifier);
+        ("EAP manual random scene set: " ++ count ++ " modifier=" ++ (modifier ? \default)).postln;
     }, '/eap/scenes');
 
     OSCdef(\eapSceneSlot, { |msg|
         var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
         var action = (msg[2] ? 0).asInteger;
+        var modifier = if(msg.size > 3, { ~eapScenes[\modifierFromCode].value(~eapScenes, msg[3]) }, { nil });
         var state;
         if(action == 1, {
-            state = ~eapScenes[\generateSlot].value(~eapScenes, slot);
-            ("EAP slot OSC regenerate: " ++ slot ++ " state=" ++ state).postln;
+            state = ~eapScenes[\generateSlot].value(~eapScenes, slot, nil, modifier);
+            ("EAP slot OSC regenerate: " ++ slot ++ " modifier=" ++ (modifier ? \default) ++ " state=" ++ state).postln;
         }, {
-            state = ~eapScenes[\toggleSlot].value(~eapScenes, slot);
-            ("EAP slot OSC toggle: " ++ slot ++ " state=" ++ state).postln;
+            state = ~eapScenes[\toggleSlot].value(~eapScenes, slot, modifier);
+            ("EAP slot OSC toggle: " ++ slot ++ " modifier=" ++ (modifier ? \default) ++ " state=" ++ state).postln;
         });
     }, '/eap/slot');
+
+    OSCdef(\eapClear, { |msg|
+        ~eapScenes[\clear].value(~eapScenes);
+        "EAP all scene lanes cleared".postln;
+    }, '/eap/clear', nil);
 
     OSCdef(\eapMasterReverb, { |msg|
         var param = (msg[1] ? 1).asInteger.clip(1, 8);
@@ -77,6 +109,16 @@ s.waitForBoot({
         var result = ~eapScenes[\refreshDexed].value(~eapScenes);
         ("EAP Dexed rescan result=" ++ result).postln;
     }, '/eap/dexed/rescan');
+
+    OSCdef(\eapTest, { |msg|
+        var freq = (msg[1] ? 440).asFloat.clip(20, 4000);
+        var dur = (msg[2] ? 1.2).asFloat.clip(0.1, 6);
+        ~eapScenes[\playTestTone].value(~eapScenes, freq, dur);
+    }, '/eap/test');
+
+    OSCdef(\eapStatus, { |msg|
+        ~eapScenes[\audioStatus].value(~eapScenes);
+    }, '/eap/status', nil);
 
     // Backward-compatible controls: names are intentionally ignored.
     OSCdef(\eapSceneTrigger, { |msg|

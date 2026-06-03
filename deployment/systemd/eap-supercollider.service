@@ -1,0 +1,22 @@
+[Unit]
+Description=Electroacoustic Playground SuperCollider
+After=eap-jack.service
+Requires=eap-jack.service
+
+[Service]
+Type=simple
+User=we
+Group=audio
+WorkingDirectory=/opt/electroacoustic-playground
+Environment=JACK_NO_AUDIO_RESERVATION=1
+Environment=QT_QPA_PLATFORM=offscreen
+Environment=SC_JACK_DEFAULT_INPUTS=4
+Environment=SC_JACK_DEFAULT_OUTPUTS=2
+LimitRTPRIO=95
+LimitMEMLOCK=infinity
+ExecStart=/usr/bin/sclang -D /opt/electroacoustic-playground/supercollider/boot.scd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

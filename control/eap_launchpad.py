@@ -20,6 +20,11 @@ REVERB_CC = 91
 TUNING_CC = 92
 SESSION_CC = 98
 MASTER_CC = 89
+PERCUSSIVE_CC = 19
+DRONE_CC = 29
+HARMONIC_CC = 39
+CHAOS_CC = 49
+MODIFIER_CCS = (PERCUSSIVE_CC, DRONE_CC, HARMONIC_CC, CHAOS_CC)
 LONG_PRESS_SECONDS = float(os.environ.get("EAP_LONG_PRESS_SECONDS", "0.65"))
 MIDI_IN = os.environ.get("EAP_LAUNCHPAD_IN", "")
 MIDI_OUT = os.environ.get("EAP_LAUNCHPAD_OUT", "")
@@ -46,6 +51,9 @@ RGB_SESSION_ACTIVE = (126, 76, 126)
 RGB_TUNING_DIM = (5, 8, 16)
 RGB_TUNING_VALUE = (12, 42, 88)
 RGB_TUNING_SELECTED = (28, 108, 126)
+RGB_MODIFIER_IDLE = (90, 28, 0)
+RGB_MODIFIER_HELD = (220, 220, 200)
+RGB_MODIFIER_REQUIRED = (126, 0, 0)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
 
@@ -76,11 +84,24 @@ def osc_string(value: str) -> bytes:
     return data + (b"\0" * ((4 - (len(data) % 4)) % 4))
 
 
-def send_slot_osc(slot: int, action: int) -> None:
-    packet = osc_string("/eap/slot") + osc_string(",ii")
-    packet += struct.pack(">ii", int(slot), int(action))
+def send_slot_osc(slot: int, action: int, modifier: int = 0) -> None:
+    packet = osc_string("/eap/slot") + osc_string(",iii")
+    packet += struct.pack(">iii", int(slot), int(action), int(modifier))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def modifier_index_for_cc(cc: int) -> int:
+    try:
+        return MODIFIER_CCS.index(cc) + 1
+    except ValueError:
+        return 0
+
+
+def active_modifier_index(held_cc: int | None) -> int:
+    if held_cc is None:
+        return 0
+    return modifier_index_for_cc(held_cc)
 
 
 def send_reverb_osc(param: int, value: int) -> None:
@@ -188,6 +209,13 @@ def paint(pad: Pad) -> None:
     send_led(pad.note, colour_for_state(pad.state))
 
 
+def flash_modifier_required(pad: Pad) -> None:
+    for colour in (RGB_MODIFIER_REQUIRED, (0, 0, 0), RGB_MODIFIER_REQUIRED):
+        send_led(pad.note, colour)
+        time.sleep(0.05)
+    paint(pad)
+
+
 def parse_event(line: str) -> tuple[str, int] | None:
     match = NOTE_ON_RE.search(line)
     if match:
@@ -206,24 +234,31 @@ def parse_event(line: str) -> tuple[str, int] | None:
     return None
 
 
-def handle_release(pad: Pad) -> None:
+def handle_release(pad: Pad, held_modifier_cc: int | None) -> None:
     if pad.pressed_at is None:
         return
 
     held_for = time.monotonic() - pad.pressed_at
     pad.pressed_at = None
+    modifier = active_modifier_index(held_modifier_cc)
 
     if held_for >= LONG_PRESS_SECONDS:
-        send_slot_osc(slot_for_note(pad.note), 1)
+        if modifier == 0:
+            flash_modifier_required(pad)
+            return
+        send_slot_osc(slot_for_note(pad.note), 1, modifier)
         pad.state = STATE_ACTIVE
     elif pad.state == STATE_BLANK:
-        send_slot_osc(slot_for_note(pad.note), 0)
+        if modifier == 0:
+            flash_modifier_required(pad)
+            return
+        send_slot_osc(slot_for_note(pad.note), 0, modifier)
         pad.state = STATE_ACTIVE
     elif pad.state == STATE_ACTIVE:
-        send_slot_osc(slot_for_note(pad.note), 0)
+        send_slot_osc(slot_for_note(pad.note), 0, modifier)
         pad.state = STATE_MUTED
     else:
-        send_slot_osc(slot_for_note(pad.note), 0)
+        send_slot_osc(slot_for_note(pad.note), 0, modifier)
         pad.state = STATE_ACTIVE
 
     paint(pad)
@@ -248,11 +283,18 @@ def matrix_position(note: int) -> tuple[int, int] | None:
     return None
 
 
-def paint_scene_page(pads: dict[int, Pad]) -> None:
+def paint_modifier_leds(held_cc: int | None) -> None:
+    for cc in MODIFIER_CCS:
+        colour = RGB_MODIFIER_HELD if cc == held_cc else RGB_MODIFIER_IDLE
+        send_led(cc, colour)
+
+
+def paint_scene_page(pads: dict[int, Pad], held_modifier_cc: int | None = None) -> None:
     for note in MATRIX_NOTES:
         send_led(note, (0, 0, 0))
     for pad in pads.values():
         paint(pad)
+    paint_modifier_leds(held_modifier_cc)
 
 
 def paint_reverb_page(values: list[int]) -> None:
@@ -466,7 +508,8 @@ def main() -> int:
     master_values = [104, 0, 127, 15, 0]
     tuning_values = [0, 0]
     mode = "scene"
-    paint_scene_page(pads)
+    held_modifier_cc: int | None = None
+    paint_scene_page(pads, held_modifier_cc)
 
     while True:
         proc = subprocess.Popen(
@@ -485,34 +528,42 @@ def main() -> int:
             if kind == "cc":
                 controller = data >> 8
                 value = data & 0xFF
+                if controller in MODIFIER_CCS:
+                    if value > 0:
+                        held_modifier_cc = controller
+                    elif held_modifier_cc == controller:
+                        held_modifier_cc = None
+                    if mode == "scene":
+                        paint_modifier_leds(held_modifier_cc)
+                    continue
                 if controller == REVERB_CC:
                     if value > 0 and mode != "reverb":
                         mode = "reverb"
                         paint_reverb_page(reverb_values)
                     elif value == 0 and mode != "scene":
                         mode = "scene"
-                        paint_scene_page(pads)
+                        paint_scene_page(pads, held_modifier_cc)
                 elif controller == TUNING_CC:
                     if value > 0 and mode != "tuning":
                         mode = "tuning"
                         paint_tuning_page(tuning_values[0], tuning_values[1])
                     elif value == 0 and mode != "scene":
                         mode = "scene"
-                        paint_scene_page(pads)
+                        paint_scene_page(pads, held_modifier_cc)
                 elif controller == SESSION_CC:
                     if value > 0 and mode != "session":
                         mode = "session"
                         paint_session_page(session_index)
                     elif value == 0 and mode != "scene":
                         mode = "scene"
-                        paint_scene_page(pads)
+                        paint_scene_page(pads, held_modifier_cc)
                 elif controller == MASTER_CC:
                     if value > 0 and mode != "master":
                         mode = "master"
                         paint_master_page(master_values)
                     elif value == 0 and mode != "scene":
                         mode = "scene"
-                        paint_scene_page(pads)
+                        paint_scene_page(pads, held_modifier_cc)
                 continue
 
             note = data
@@ -551,7 +602,7 @@ def main() -> int:
             if kind == "on":
                 pad.pressed_at = time.monotonic()
             else:
-                handle_release(pad)
+                handle_release(pad, held_modifier_cc)
 
         time.sleep(1.0)
 

@@ -6,7 +6,11 @@ Wants=eap-dexed.service
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 User=we
+Group=audio
+Environment=JACK_NO_AUDIO_RESERVATION=1
+LimitMEMLOCK=infinity
 ExecStart=/usr/local/bin/eap-connect-dexed-jack 80 0.5
 
 [Install]
