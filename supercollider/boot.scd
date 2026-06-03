@@ -86,6 +86,18 @@ s.waitForBoot({
         ~eapScenes[\setMaster].value(~eapScenes, param, value);
     }, '/eap/master');
 
+    OSCdef(\eapSlotVolume, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var value = ((msg[2] ? 100).asInteger / 127).clip(0, 1);
+        ~eapScenes[\setSlotVolume].value(~eapScenes, slot, value);
+    }, '/eap/slot/volume');
+
+    OSCdef(\eapSlotPan, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var value = ((msg[2] ? 64).asInteger / 127).linlin(0, 1, -1, 1).clip(-1, 1);
+        ~eapScenes[\setSlotPan].value(~eapScenes, slot, value);
+    }, '/eap/slot/pan');
+
     OSCdef(\eapSession, { |msg|
         var slot = (msg[1] ? 1).asInteger.clip(1, 64);
         var action = (msg[2] ? 0).asInteger;

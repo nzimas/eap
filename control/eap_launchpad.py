@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import json
 import re
+import select
 import socket
 import struct
 import subprocess
@@ -54,6 +55,12 @@ RGB_TUNING_SELECTED = (28, 108, 126)
 RGB_MODIFIER_IDLE = (90, 28, 0)
 RGB_MODIFIER_HELD = (220, 220, 200)
 RGB_MODIFIER_REQUIRED = (126, 0, 0)
+RGB_PERFORMANCE_SELECTED = (0, 96, 126)
+RGB_PERFORMANCE_VALUE = (0, 52, 86)
+RGB_PERFORMANCE_DIM = (2, 10, 16)
+RGB_PAN_SELECTED = (96, 32, 126)
+RGB_PAN_VALUE = (42, 12, 74)
+RGB_PAN_CENTER = (24, 24, 32)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
 
@@ -71,6 +78,8 @@ class Pad:
     note: int
     state: int = STATE_BLANK
     pressed_at: float | None = None
+    volume: int = 100
+    pan: int = 64
 
 
 @dataclass
@@ -87,6 +96,20 @@ def osc_string(value: str) -> bytes:
 def send_slot_osc(slot: int, action: int, modifier: int = 0) -> None:
     packet = osc_string("/eap/slot") + osc_string(",iii")
     packet += struct.pack(">iii", int(slot), int(action), int(modifier))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_slot_volume_osc(slot: int, value: int) -> None:
+    packet = osc_string("/eap/slot/volume") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), int(value))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_slot_pan_osc(slot: int, value: int) -> None:
+    packet = osc_string("/eap/slot/pan") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), int(value))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
 
@@ -297,6 +320,72 @@ def paint_scene_page(pads: dict[int, Pad], held_modifier_cc: int | None = None) 
     paint_modifier_leds(held_modifier_cc)
 
 
+def col_for_value(value: int) -> int:
+    return 1 + round((max(0, min(value, 127)) / 127) * 7)
+
+
+def value_for_col(col: int) -> int:
+    return round(((col - 1) / 7) * 127)
+
+
+def paint_performance_page(pads: dict[int, Pad], selected_slot: int) -> None:
+    selected_note = BOTTOM_ROW_NOTES[selected_slot - 1]
+    pad = pads[selected_note]
+    volume_col = col_for_value(pad.volume)
+    pan_col = col_for_value(pad.pan)
+    for note in MATRIX_NOTES:
+        position = matrix_position(note)
+        if position is None:
+            continue
+        row, col = position
+        if row == 1:
+            if note == selected_note:
+                send_led(note, RGB_PERFORMANCE_SELECTED)
+            else:
+                send_led(note, colour_for_state(pads[note].state) if note in pads else (0, 0, 0))
+        elif row == 2:
+            if col == volume_col:
+                colour = RGB_PERFORMANCE_SELECTED
+            elif col <= volume_col:
+                colour = RGB_PERFORMANCE_VALUE
+            else:
+                colour = RGB_PERFORMANCE_DIM
+            send_led(note, colour)
+        elif row == 3:
+            if col == pan_col:
+                colour = RGB_PAN_SELECTED
+            elif col in (4, 5):
+                colour = RGB_PAN_CENTER
+            elif (pan_col < 5 and pan_col <= col <= 4) or (pan_col > 4 and 5 <= col <= pan_col):
+                colour = RGB_PAN_VALUE
+            else:
+                colour = RGB_PERFORMANCE_DIM
+            send_led(note, colour)
+        else:
+            send_led(note, RGB_PERFORMANCE_DIM)
+
+
+def handle_performance_note(note: int, pads: dict[int, Pad], selected_slot: int) -> bool:
+    position = matrix_position(note)
+    if position is None:
+        return False
+    row, col = position
+    selected_note = BOTTOM_ROW_NOTES[selected_slot - 1]
+    pad = pads[selected_note]
+    value = value_for_col(col)
+    if row == 2:
+        pad.volume = value
+        send_slot_volume_osc(selected_slot, value)
+        paint_performance_page(pads, selected_slot)
+        return True
+    if row == 3:
+        pad.pan = value
+        send_slot_pan_osc(selected_slot, value)
+        paint_performance_page(pads, selected_slot)
+        return True
+    return False
+
+
 def paint_reverb_page(values: list[int]) -> None:
     for note in MATRIX_NOTES:
         position = matrix_position(note)
@@ -416,6 +505,8 @@ def session_snapshot(
     return {
         "saved_at": time.time(),
         "pads": [pads[note].state for note in BOTTOM_ROW_NOTES],
+        "scene_volume": [pads[note].volume for note in BOTTOM_ROW_NOTES],
+        "scene_pan": [pads[note].pan for note in BOTTOM_ROW_NOTES],
         "reverb": list(reverb_values),
         "master": list(master_values),
         "tuning": list(tuning_values),
@@ -432,6 +523,14 @@ def restore_session_snapshot(
     for note, state in zip(BOTTOM_ROW_NOTES, data.get("pads", [])):
         if state in (STATE_BLANK, STATE_ACTIVE, STATE_MUTED):
             pads[note].state = state
+    for note, value in zip(BOTTOM_ROW_NOTES, data.get("scene_volume", [])):
+        if isinstance(value, int):
+            pads[note].volume = max(0, min(value, 127))
+            send_slot_volume_osc(slot_for_note(note), pads[note].volume)
+    for note, value in zip(BOTTOM_ROW_NOTES, data.get("scene_pan", [])):
+        if isinstance(value, int):
+            pads[note].pan = max(0, min(value, 127))
+            send_slot_pan_osc(slot_for_note(note), pads[note].pan)
     for target, source in (
         (reverb_values, data.get("reverb", [])),
         (master_values, data.get("master", [])),
@@ -509,6 +608,9 @@ def main() -> int:
     tuning_values = [0, 0]
     mode = "scene"
     held_modifier_cc: int | None = None
+    performance_slot: int | None = None
+    performance_scene_note: int | None = None
+    performance_interacted = False
     paint_scene_page(pads, held_modifier_cc)
 
     while True:
@@ -520,7 +622,29 @@ def main() -> int:
             bufsize=1,
         )
         assert proc.stdout is not None
-        for line in proc.stdout:
+        while proc.poll() is None:
+            if mode == "scene" and active_modifier_index(held_modifier_cc) == 0:
+                now = time.monotonic()
+                for held_pad in pads.values():
+                    if (
+                        held_pad.pressed_at is not None
+                        and held_pad.state != STATE_BLANK
+                        and now - held_pad.pressed_at >= LONG_PRESS_SECONDS
+                    ):
+                        performance_slot = slot_for_note(held_pad.note)
+                        performance_scene_note = held_pad.note
+                        performance_interacted = False
+                        mode = "performance"
+                        paint_performance_page(pads, performance_slot)
+                        break
+
+            ready, _, _ = select.select([proc.stdout], [], [], 0.05)
+            if not ready:
+                continue
+
+            line = proc.stdout.readline()
+            if line == "":
+                break
             event = parse_event(line)
             if event is None:
                 continue
@@ -539,6 +663,8 @@ def main() -> int:
                 if controller == REVERB_CC:
                     if value > 0 and mode != "reverb":
                         mode = "reverb"
+                        performance_slot = None
+                        performance_scene_note = None
                         paint_reverb_page(reverb_values)
                     elif value == 0 and mode != "scene":
                         mode = "scene"
@@ -546,6 +672,8 @@ def main() -> int:
                 elif controller == TUNING_CC:
                     if value > 0 and mode != "tuning":
                         mode = "tuning"
+                        performance_slot = None
+                        performance_scene_note = None
                         paint_tuning_page(tuning_values[0], tuning_values[1])
                     elif value == 0 and mode != "scene":
                         mode = "scene"
@@ -553,6 +681,8 @@ def main() -> int:
                 elif controller == SESSION_CC:
                     if value > 0 and mode != "session":
                         mode = "session"
+                        performance_slot = None
+                        performance_scene_note = None
                         paint_session_page(session_index)
                     elif value == 0 and mode != "scene":
                         mode = "scene"
@@ -560,6 +690,8 @@ def main() -> int:
                 elif controller == MASTER_CC:
                     if value > 0 and mode != "master":
                         mode = "master"
+                        performance_slot = None
+                        performance_scene_note = None
                         paint_master_page(master_values)
                     elif value == 0 and mode != "scene":
                         mode = "scene"
@@ -567,6 +699,26 @@ def main() -> int:
                 continue
 
             note = data
+            if mode == "performance":
+                if kind == "on" and performance_slot is not None:
+                    if handle_performance_note(note, pads, performance_slot):
+                        performance_interacted = True
+                    continue
+                if kind == "off" and performance_scene_note == note:
+                    pad = pads.get(note)
+                    if pad is not None and pad.pressed_at is not None:
+                        held_for = time.monotonic() - pad.pressed_at
+                        pad.pressed_at = None
+                        if not performance_interacted and held_for < LONG_PRESS_SECONDS:
+                            send_slot_osc(slot_for_note(pad.note), 0, 0)
+                            pad.state = STATE_MUTED if pad.state == STATE_ACTIVE else STATE_ACTIVE
+                    mode = "scene"
+                    performance_slot = None
+                    performance_scene_note = None
+                    performance_interacted = False
+                    paint_scene_page(pads, held_modifier_cc)
+                continue
+
             if mode == "reverb":
                 if kind == "on":
                     handle_reverb_note(note, reverb_values)

@@ -846,16 +846,19 @@
         SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, pit = 0, pos = 0.5,
             size = 0.25, dens = 0.4, tex = 0.5, drywet = 0.55, in_gain = 1,
             spread = 0.5, rvb = 0.2, fb = 0.1, freeze = 0, mode = 0, lofi = 0,
-            amp = 0.84, fadeTime = 0.05|
+            amp = 0.84, pan = 0, fadeTime = 0.05|
             var source, sig;
             source = LeakDC.ar(In.ar(in, 2));
             sig = MiClouds.ar(source, pit, pos, size, dens, tex, drywet, in_gain,
                 spread, rvb, fb, freeze, mode, lofi, 0);
-            Out.ar(out, Limiter.ar(LeakDC.ar(sig) * Lag.kr(amp, fadeTime), 0.9, 0.01));
+            sig = Balance2.ar(sig[0], sig[1], Lag.kr(pan, fadeTime).clip(-1, 1), Lag.kr(amp, fadeTime));
+            Out.ar(out, Limiter.ar(LeakDC.ar(sig), 0.9, 0.01));
         }).add;
 
-        SynthDef(\eapLaneOut, { |in = 0, out = 0, amp = 0.78, fadeTime = 0.05|
-            Out.ar(out, Limiter.ar(LeakDC.ar(In.ar(in, 2)) * Lag.kr(amp, fadeTime), 0.9, 0.01));
+        SynthDef(\eapLaneOut, { |in = 0, out = 0, amp = 0.78, pan = 0, fadeTime = 0.05|
+            var sig = LeakDC.ar(In.ar(in, 2));
+            sig = Balance2.ar(sig[0], sig[1], Lag.kr(pan, fadeTime).clip(-1, 1), Lag.kr(amp, fadeTime));
+            Out.ar(out, Limiter.ar(sig, 0.9, 0.01));
         }).add;
 
         SynthDef(\eapTestTone, { |out = 0, freq = 440, dur = 1.2, amp = 0.45|
@@ -887,6 +890,8 @@
                     ++ " modifier=" ++ (lane[\soundModifier] ? \none)
                     ++ " profile=" ++ (lane[\patternProfile] ? lane[\rhythmProfile] ? \unknown)
                     ++ " cpu=" ++ (lane[\cpuClass] ? \normal)
+                    ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
+                    ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
                     ++ " routine=" ++ lane[\routine].notNil
                     ++ " ticks=" ++ (lane[\tickCount] ? 0)
                     ++ " triggers=" ++ (lane[\triggerCount] ? 0)
@@ -1271,6 +1276,8 @@
             pulse: pulse,
             swing: swing,
             cpuClass: cpuClass,
+            level: 1.0,
+            pan: 0.0,
             amp: (0.28 / total.sqrt).clip(0.10, 0.26),
             plaitsModels: plaitsModels,
             ringsModel: rings[\model],
@@ -1313,7 +1320,8 @@
                 \in, currentIn, \out, self[\masterBus].index,
                 \pit, c[\pit], \pos, c[\pos], \size, c[\size], \dens, c[\dens],
                 \tex, c[\tex], \drywet, c[\drywet], \spread, c[\spread],
-                \rvb, c[\rvb], \fb, c[\fb], \mode, c[\mode], \lofi, c[\lofi]
+                \rvb, c[\rvb], \fb, c[\fb], \mode, c[\mode], \lofi, c[\lofi],
+                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0
             ]);
             lane[\outSynth] = synth;
             lane[\synths].add(synth);
@@ -1333,11 +1341,24 @@
                 target = synth;
                 addAction = \addAfter;
             });
-            outSynth = Synth.new(\eapLaneOut, [\in, currentIn, \out, self[\masterBus].index], target, \addAfter);
+            outSynth = Synth.new(\eapLaneOut, [
+                \in, currentIn, \out, self[\masterBus].index,
+                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0
+            ], target, \addAfter);
             lane[\synths].add(outSynth);
             lane[\outSynth] = outSynth;
             lane[\pedals] = chain;
         };
+    };
+
+    ~applyLaneOutput = { |self, lane|
+        if(lane.notNil and: { lane[\outSynth].notNil }) {
+            lane[\outSynth].set(
+                \amp, (lane[\amp] ? 0.18) * (lane[\level] ? 1.0),
+                \pan, lane[\pan] ? 0.0
+            );
+        };
+        lane;
     };
 
     ~lanePattern = { |self, lane|
@@ -1356,7 +1377,6 @@
         ~stopLaneRoutine.value(lane);
         if(lane[\group].notNil) {
             if(waitPhase) { lane[\rhythmState] = nil; };
-            lane[\eventStream] = nil;
             token = (lane[\routineToken] ? 0) + 1;
             lane[\routineToken] = token;
             lane[\routine] = token;
@@ -1401,7 +1421,11 @@
                     nil
                 })
             };
-            initialDelay = if(waitPhase and: { lane[\phase].notNil }, { lane[\phase] }, { 0.0 });
+            initialDelay = if(waitPhase, {
+                (lane[\phase] ? self[\tickIntervalForLane].value(self, lane)).asFloat.max(0.25);
+            }, {
+                0.0;
+            });
             SystemClock.sched(initialDelay, tick);
             lane[\routineStartedAt] = Main.elapsedTime;
             if(lane[\routine].isNil, {
@@ -1530,6 +1554,8 @@
 
     ~startLane = { |self, lane|
         if(lane[\state] != \active) {
+            var wasBlank = lane[\state] == \blank;
+            var wasMuted = lane[\state] == \muted;
             lane[\group] = Group.head(self[\group]);
             lane[\sourceBus] = Bus.audio(s, 2);
             lane[\buses] = List.new;
@@ -1537,16 +1563,18 @@
             lane[\synths] = List.new;
             self[\buildFx].value(self, lane, lane[\sourceBus]);
             lane[\state] = \active;
-            self[\restartLaneRoutine].value(self, lane, false);
+            self[\restartLaneRoutine].value(self, lane, wasMuted);
             if(lane[\routine].isNil, {
                 ("EAP lane " ++ (lane[\slot] ? lane[\index] ? "?")
                     ++ " rhythm did not start — retrying").postln;
-                self[\restartLaneRoutine].value(self, lane, false);
+                self[\restartLaneRoutine].value(self, lane, wasMuted);
             }, {
-                self[\triggerLane].value(self, lane, (
-                    sourceCount: 1, accent: 1.0, scaleStep: 0,
-                    panBias: 0.0, decayScale: 0.85
-                ));
+                if(wasBlank, {
+                    self[\triggerLane].value(self, lane, (
+                        sourceCount: 1, accent: 1.0, scaleStep: 0,
+                        panBias: 0.0, decayScale: 0.85
+                    ));
+                });
             });
         };
         lane;
@@ -1593,7 +1621,36 @@
                 };
                 lane[\total] = total;
                 lane[\amp] = (0.28 / total.sqrt).clip(0.10, 0.26);
+                self[\applyLaneOutput].value(self, lane);
             };
+        });
+    };
+
+    ~setSlotVolume = { |self, slot, value|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var lane = self[\slots][index - 1];
+        var level = value.asFloat.clip(0, 1);
+        if(lane.notNil, {
+            lane[\level] = level;
+            self[\applyLaneOutput].value(self, lane);
+            ("EAP slot " ++ index ++ " volume=" ++ level.round(0.001)).postln;
+            1;
+        }, {
+            0;
+        });
+    };
+
+    ~setSlotPan = { |self, slot, value|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var lane = self[\slots][index - 1];
+        var pan = value.asFloat.clip(-1, 1);
+        if(lane.notNil, {
+            lane[\pan] = pan;
+            self[\applyLaneOutput].value(self, lane);
+            ("EAP slot " ++ index ++ " pan=" ++ pan.round(0.001)).postln;
+            1;
+        }, {
+            0;
         });
     };
 
@@ -1691,7 +1748,8 @@
                 phase: lane[\phase], gap: lane[\gap], densitySkew: lane[\densitySkew],
                 restProb: lane[\restProb], volatility: lane[\volatility],
                 rhythmProfile: lane[\rhythmProfile], pulse: lane[\pulse], swing: lane[\swing],
-                amp: lane[\amp], plaitsModels: lane[\plaitsModels].copy,
+                amp: lane[\amp], level: lane[\level], pan: lane[\pan], cpuClass: lane[\cpuClass],
+                plaitsModels: lane[\plaitsModels].copy,
                 ringsModel: lane[\ringsModel], rings: if(lane[\rings].notNil, { lane[\rings].copy }, { nil }),
                 soundModifier: lane[\soundModifier], lastDegree: lane[\lastDegree],
                 molly: lane[\molly].copy, passersby: lane[\passersby].copy,
@@ -1723,6 +1781,9 @@
         lane[\rhythmProfile] = lane[\rhythmProfile] ? self[\rhythmProfilesFor].value(lane[\soundModifier]).choose;
         lane[\pulse] = lane[\pulse] ? 0.12;
         lane[\swing] = lane[\swing] ? 0.0;
+        lane[\level] = lane[\level] ? 1.0;
+        lane[\pan] = lane[\pan] ? 0.0;
+        lane[\cpuClass] = lane[\cpuClass] ? \normal;
         lane[\plaitsModels] = (lane[\plaitsModels] ? [0]).collect({ |model|
             if(self[\plaitsModelPool].includes(model), { model }, { self[\plaitsModelPool].choose });
         });
