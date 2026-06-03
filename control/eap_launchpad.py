@@ -52,6 +52,9 @@ RGB_SESSION_ACTIVE = (126, 76, 126)
 RGB_TUNING_DIM = (5, 8, 16)
 RGB_TUNING_VALUE = (12, 42, 88)
 RGB_TUNING_SELECTED = (28, 108, 126)
+RGB_ENGINE_DIM = (10, 5, 14)
+RGB_ENGINE_VALUE = (54, 18, 88)
+RGB_ENGINE_SELECTED = (112, 44, 126)
 RGB_MODIFIER_IDLE = (90, 28, 0)
 RGB_MODIFIER_HELD = (220, 220, 200)
 RGB_MODIFIER_REQUIRED = (126, 0, 0)
@@ -69,6 +72,7 @@ RGB_REVERB_SEND_SELECTED = (0, 68, 126)
 RGB_REVERB_SEND_VALUE = (0, 28, 74)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
+ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6]
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -181,6 +185,13 @@ def send_session_osc(slot: int, action: int) -> None:
 def send_tuning_osc(scale: int, root: int) -> None:
     packet = osc_string("/eap/tuning") + osc_string(",ii")
     packet += struct.pack(">ii", int(scale), int(root))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_engine_osc(engine_code: int) -> None:
+    packet = osc_string("/eap/engine") + osc_string(",i")
+    packet += struct.pack(">i", int(engine_code))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
 
@@ -517,7 +528,7 @@ def handle_master_note(note: int, values: list[int]) -> None:
     paint_master_page(values)
 
 
-def paint_tuning_page(scale_index: int, root_index: int) -> None:
+def paint_tuning_page(scale_index: int, root_index: int, engine_index: int = 0) -> None:
     for note in MATRIX_NOTES:
         position = matrix_position(note)
         if position is None:
@@ -527,6 +538,8 @@ def paint_tuning_page(scale_index: int, root_index: int) -> None:
             colour = RGB_TUNING_SELECTED if (col - 1) == scale_index else RGB_TUNING_VALUE
         elif row == 7 and col <= 7:
             colour = RGB_TUNING_SELECTED if (col - 1) == root_index else RGB_TUNING_DIM
+        elif row == 4 and col <= len(ENGINE_CODES):
+            colour = RGB_ENGINE_SELECTED if (col - 1) == engine_index else RGB_ENGINE_VALUE
         else:
             colour = (0, 0, 0)
         send_led(note, colour)
@@ -541,10 +554,15 @@ def handle_tuning_note(note: int, tuning_values: list[int]) -> None:
         tuning_values[0] = col - 1
     elif row == 7 and col <= 7:
         tuning_values[1] = col - 1
+    elif row == 4 and col <= len(ENGINE_CODES):
+        tuning_values[2] = col - 1
+        send_engine_osc(ENGINE_CODES[tuning_values[2]])
+        paint_tuning_page(tuning_values[0], tuning_values[1], tuning_values[2])
+        return
     else:
         return
     send_tuning_osc(tuning_values[0], ROOT_NOTES[tuning_values[1]])
-    paint_tuning_page(tuning_values[0], tuning_values[1])
+    paint_tuning_page(tuning_values[0], tuning_values[1], tuning_values[2])
 
 
 def load_session_index() -> dict:
@@ -625,8 +643,16 @@ def restore_session_snapshot(
     ):
         for index, value in enumerate(source[: len(target)]):
             if isinstance(value, int):
-                limit = 7 if target is tuning_values and index == 0 else 6 if target is tuning_values else 127
+                limit = (
+                    7
+                    if target is tuning_values and index == 0
+                    else 6
+                    if target is tuning_values and index in (1, 2)
+                    else 127
+                )
                 target[index] = max(0, min(value, limit))
+    if len(tuning_values) > 2:
+        send_engine_osc(ENGINE_CODES[tuning_values[2]])
 
 
 def paint_session_page(index: dict) -> None:
@@ -692,7 +718,7 @@ def main() -> int:
     session_index = load_session_index()
     reverb_values = [31, 70, 57, 46, 32, 94, 31, 79]
     master_values = [104, 0, 127, 15, 0]
-    tuning_values = [0, 0]
+    tuning_values = [0, 0, 0]
     mode = "scene"
     held_modifier_cc: int | None = None
     performance_slot: int | None = None
@@ -761,7 +787,7 @@ def main() -> int:
                         mode = "tuning"
                         performance_slot = None
                         performance_scene_note = None
-                        paint_tuning_page(tuning_values[0], tuning_values[1])
+                        paint_tuning_page(tuning_values[0], tuning_values[1], tuning_values[2])
                     elif value == 0 and mode != "scene":
                         mode = "scene"
                         paint_scene_page(pads, held_modifier_cc)

@@ -19,6 +19,7 @@
     ~dexedAvailable = false;
     ~scaleIndex = 0;
     ~rootNote = 0;
+    ~sourceEnginePreference = nil;
     ~sessionDir = "/home/we/.local/share/eap/sessions";
     ~lanes = List.new;
     ~slots = nil;
@@ -44,10 +45,23 @@
     ];
 
     ~soundModifierSymbols = [\percussive, \drone, \harmonic, \chaos];
+    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \fold, \dexed];
 
     ~modifierFromCode = { |self, code|
         var index = code.asInteger;
         if((index >= 1) and: { index <= 4 }, { self[\soundModifierSymbols][index - 1] }, { nil });
+    };
+
+    ~sourceEngineFromCode = { |self, code|
+        var index = code.asInteger.clip(0, self[\sourceEngineSymbols].size - 1);
+        self[\sourceEngineSymbols][index];
+    };
+
+    ~setSourceEnginePreference = { |self, code|
+        var engine = self[\sourceEngineFromCode].value(self, code);
+        self[\sourceEnginePreference] = engine;
+        ("EAP future source engine=" ++ (engine ? \any)).postln;
+        engine;
     };
 
     ~rand = { |self, lo = 0.0, hi = 1.0| rrand(lo.asFloat, hi.asFloat) };
@@ -1048,6 +1062,7 @@
     };
 
     ~randomLane = { |self, index, total, modifier = nil|
+        var enginePreference = self[\sourceEnginePreference];
         var materialPool = [\plaits, \plaits, \rings, \rings, \fold, \passersby, \passersby];
         var maxMaterials = self[\maxSourcesPerScene];
         var materialCount = if(total >= 7, { 1 }, { rrand(1, maxMaterials) });
@@ -1140,7 +1155,7 @@
         );
         var dexedPatchSeed = dexed[\patchSeed];
         var dexedPatchInfo = "";
-        var dexedAvailable = false;
+        var dexedAvailable = if(enginePreference == \dexed, { self[\refreshDexed].value(self) }, { false });
         var cpuClass = \normal;
         if(dexedAvailable, {
             materialPool = materialPool ++ [\dexed, \dexed];
@@ -1275,15 +1290,22 @@
         if(rhythmProfile.isNil, {
             rhythmProfile = self[\rhythmProfilesFor].value(modifier).choose;
         });
+        if(enginePreference.notNil, {
+            if(enginePreference == \dexed and: { dexedAvailable.not }, {
+                "EAP future source engine dexed unavailable; using modifier material pool".postln;
+            }, {
+                materialPool = [enginePreference];
+            });
+        });
         materials = Array.fill(materialCount, { materialPool.choose });
-        if((modifier != \drone) and: { modifier != \harmonic }, {
+        if(enginePreference.isNil and: { (modifier != \drone) and: { modifier != \harmonic } }, {
             materials = materials.reject({ |source| source == \molly });
             while({ materials.isEmpty and: { materialPool.notEmpty } }, {
                 materials = materials.add(materialPool.choose);
                 materials = materials.reject({ |source| source == \molly });
             });
         });
-        if(materials.select({ |source| source != \dexed }).isEmpty, {
+        if(enginePreference != \dexed and: { materials.select({ |source| source != \dexed }).isEmpty }, {
             materials[0] = switch(modifier,
                 \percussive, { [\fold, \plaits, \passersby].choose },
                 \chaos, { [\fold, \passersby, \plaits].choose },
@@ -2077,6 +2099,7 @@
             self[\syncLoad].value(self);
             ("EAP slot " ++ index ++ " generated materials=" ++ lane[\materials].asString ++
                 " fx=" ++ lane[\fx] ++ " modifier=" ++ (lane[\soundModifier] ? \default)
+                ++ " sourceEngine=" ++ (self[\sourceEnginePreference] ? \any)
                 ++ " rhythm=" ++ (lane[\rhythmProfile] ? \unknown)
                 ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
                 ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)

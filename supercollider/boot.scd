@@ -135,6 +135,11 @@ s.waitForBoot({
         ~eapScenes[\setTuning].value(~eapScenes, scaleIndex, rootNote);
     }, '/eap/tuning');
 
+    OSCdef(\eapSourceEngine, { |msg|
+        var code = (msg[1] ? 0).asInteger.clip(0, 6);
+        ~eapScenes[\setSourceEnginePreference].value(~eapScenes, code);
+    }, '/eap/engine');
+
     OSCdef(\eapDexedRescan, { |msg|
         var result = ~eapScenes[\refreshDexed].value(~eapScenes);
         ("EAP Dexed rescan result=" ++ result).postln;
