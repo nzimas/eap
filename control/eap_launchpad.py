@@ -61,6 +61,12 @@ RGB_PERFORMANCE_DIM = (2, 10, 16)
 RGB_PAN_SELECTED = (96, 32, 126)
 RGB_PAN_VALUE = (42, 12, 74)
 RGB_PAN_CENTER = (24, 24, 32)
+RGB_DENSITY_SELECTED = (96, 86, 0)
+RGB_DENSITY_VALUE = (54, 42, 0)
+RGB_TIMBRE_SELECTED = (0, 112, 54)
+RGB_TIMBRE_VALUE = (0, 58, 28)
+RGB_REVERB_SEND_SELECTED = (0, 68, 126)
+RGB_REVERB_SEND_VALUE = (0, 28, 74)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
 
@@ -80,6 +86,9 @@ class Pad:
     pressed_at: float | None = None
     volume: int = 100
     pan: int = 64
+    density: int = 100
+    timbre_motion: int = 0
+    reverb_send: int = 64
 
 
 @dataclass
@@ -109,6 +118,27 @@ def send_slot_volume_osc(slot: int, value: int) -> None:
 
 def send_slot_pan_osc(slot: int, value: int) -> None:
     packet = osc_string("/eap/slot/pan") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), int(value))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_slot_density_osc(slot: int, value: int) -> None:
+    packet = osc_string("/eap/slot/density") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), int(value))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_slot_timbre_osc(slot: int, value: int) -> None:
+    packet = osc_string("/eap/slot/timbre") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), int(value))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_slot_reverb_send_osc(slot: int, value: int) -> None:
+    packet = osc_string("/eap/slot/reverb") + osc_string(",ii")
     packet += struct.pack(">ii", int(slot), int(value))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
@@ -333,6 +363,9 @@ def paint_performance_page(pads: dict[int, Pad], selected_slot: int) -> None:
     pad = pads[selected_note]
     volume_col = col_for_value(pad.volume)
     pan_col = col_for_value(pad.pan)
+    density_col = col_for_value(pad.density)
+    timbre_col = col_for_value(pad.timbre_motion)
+    reverb_send_col = col_for_value(pad.reverb_send)
     for note in MATRIX_NOTES:
         position = matrix_position(note)
         if position is None:
@@ -361,6 +394,30 @@ def paint_performance_page(pads: dict[int, Pad], selected_slot: int) -> None:
             else:
                 colour = RGB_PERFORMANCE_DIM
             send_led(note, colour)
+        elif row == 4:
+            if col == density_col:
+                colour = RGB_DENSITY_SELECTED
+            elif col <= density_col:
+                colour = RGB_DENSITY_VALUE
+            else:
+                colour = RGB_PERFORMANCE_DIM
+            send_led(note, colour)
+        elif row == 5:
+            if col == timbre_col:
+                colour = RGB_TIMBRE_SELECTED
+            elif col <= timbre_col:
+                colour = RGB_TIMBRE_VALUE
+            else:
+                colour = RGB_PERFORMANCE_DIM
+            send_led(note, colour)
+        elif row == 6:
+            if col == reverb_send_col:
+                colour = RGB_REVERB_SEND_SELECTED
+            elif col <= reverb_send_col:
+                colour = RGB_REVERB_SEND_VALUE
+            else:
+                colour = RGB_PERFORMANCE_DIM
+            send_led(note, colour)
         else:
             send_led(note, RGB_PERFORMANCE_DIM)
 
@@ -381,6 +438,21 @@ def handle_performance_note(note: int, pads: dict[int, Pad], selected_slot: int)
     if row == 3:
         pad.pan = value
         send_slot_pan_osc(selected_slot, value)
+        paint_performance_page(pads, selected_slot)
+        return True
+    if row == 4:
+        pad.density = value
+        send_slot_density_osc(selected_slot, value)
+        paint_performance_page(pads, selected_slot)
+        return True
+    if row == 5:
+        pad.timbre_motion = value
+        send_slot_timbre_osc(selected_slot, value)
+        paint_performance_page(pads, selected_slot)
+        return True
+    if row == 6:
+        pad.reverb_send = value
+        send_slot_reverb_send_osc(selected_slot, value)
         paint_performance_page(pads, selected_slot)
         return True
     return False
@@ -507,6 +579,9 @@ def session_snapshot(
         "pads": [pads[note].state for note in BOTTOM_ROW_NOTES],
         "scene_volume": [pads[note].volume for note in BOTTOM_ROW_NOTES],
         "scene_pan": [pads[note].pan for note in BOTTOM_ROW_NOTES],
+        "scene_density": [pads[note].density for note in BOTTOM_ROW_NOTES],
+        "scene_timbre_motion": [pads[note].timbre_motion for note in BOTTOM_ROW_NOTES],
+        "scene_reverb_send": [pads[note].reverb_send for note in BOTTOM_ROW_NOTES],
         "reverb": list(reverb_values),
         "master": list(master_values),
         "tuning": list(tuning_values),
@@ -531,6 +606,18 @@ def restore_session_snapshot(
         if isinstance(value, int):
             pads[note].pan = max(0, min(value, 127))
             send_slot_pan_osc(slot_for_note(note), pads[note].pan)
+    for note, value in zip(BOTTOM_ROW_NOTES, data.get("scene_density", [])):
+        if isinstance(value, int):
+            pads[note].density = max(0, min(value, 127))
+            send_slot_density_osc(slot_for_note(note), pads[note].density)
+    for note, value in zip(BOTTOM_ROW_NOTES, data.get("scene_timbre_motion", [])):
+        if isinstance(value, int):
+            pads[note].timbre_motion = max(0, min(value, 127))
+            send_slot_timbre_osc(slot_for_note(note), pads[note].timbre_motion)
+    for note, value in zip(BOTTOM_ROW_NOTES, data.get("scene_reverb_send", [])):
+        if isinstance(value, int):
+            pads[note].reverb_send = max(0, min(value, 127))
+            send_slot_reverb_send_osc(slot_for_note(note), pads[note].reverb_send)
     for target, source in (
         (reverb_values, data.get("reverb", [])),
         (master_values, data.get("master", [])),

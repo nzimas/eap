@@ -98,6 +98,24 @@ s.waitForBoot({
         ~eapScenes[\setSlotPan].value(~eapScenes, slot, value);
     }, '/eap/slot/pan');
 
+    OSCdef(\eapSlotDensity, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var value = ((msg[2] ? 100).asInteger / 127).linlin(0, 1, 0.05, 1.0).clip(0.05, 1);
+        ~eapScenes[\setSlotDensity].value(~eapScenes, slot, value);
+    }, '/eap/slot/density');
+
+    OSCdef(\eapSlotTimbre, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var value = ((msg[2] ? 0).asInteger / 127).clip(0, 1);
+        ~eapScenes[\setSlotTimbreMotion].value(~eapScenes, slot, value);
+    }, '/eap/slot/timbre');
+
+    OSCdef(\eapSlotReverbSend, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var value = ((msg[2] ? 64).asInteger / 127).clip(0, 1);
+        ~eapScenes[\setSlotReverbSend].value(~eapScenes, slot, value);
+    }, '/eap/slot/reverb');
+
     OSCdef(\eapSession, { |msg|
         var slot = (msg[1] ? 1).asInteger.clip(1, 64);
         var action = (msg[2] ? 0).asInteger;

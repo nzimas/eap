@@ -10,6 +10,7 @@
     ~group = nil;
     ~masterGroup = nil;
     ~masterBus = nil;
+    ~reverbBus = nil;
     ~masterSynth = nil;
     ~externalInputSynth = nil;
     ~reverbValues = nil;
@@ -35,7 +36,7 @@
     ];
 
     ~plaitsModelPool = [0, 1, 3, 4, 5, 6, 11, 12];
-    ~plaitsPercussiveModels = [0, 1, 3, 4, 11];
+    ~plaitsPercussiveModels = [11, 11, 12, 12, 3, 1];
 
     ~pedalCandidates = [
         \chorus, \phaser, \vibrato, \tremolo, \delay, \reverb,
@@ -136,7 +137,7 @@
                     \isRest, Pwrand([0, 0, 0, 1], [0.86, 0.08, 0.04, 0.02], inf),
                     \accent, Pseq([1.7, 0.9, 1.15, 0.82, 1.35, 0.95, 1.1, 0.78], inf),
                     \scaleStep, Pwrand([0, 0, 1, -1, 2, -2, 3], [0.38, 0.18, 0.14, 0.10, 0.08, 0.06, 0.06], inf),
-                    \sourceCount, Pwrand([1, matN.min(2)], [0.72, 0.28], inf),
+                    \sourceCount, 1,
                     \panBias, Pwhite(-0.45, 0.45, inf),
                     \decayScale, Pwhite(0.28, 0.85, inf),
                     \hits, Pwrand([1, 1, 2], [0.72, 0.18, 0.10], inf)
@@ -582,14 +583,24 @@
             var maxDelta = self[\maxDeltaForLane].value(self, lane);
             var loadN = self[\activeCount].value(self);
             var isRest = (event[\isRest] ? 0).asInteger;
+            var density = (lane[\density] ? 1.0).asFloat.clip(0.05, 1.0);
+            if(isRest == 0 and: { density.coin.not }) {
+                isRest = 1;
+            };
             (
                 delta: (event[\delta] ? lane[\gap] ? 0.12).asFloat.clip(minDelta, maxDelta),
                 isRest: isRest,
                 accent: (event[\accent] ? 1.0).asFloat.clip(0.0, 2.2),
                 scaleStep: (event[\scaleStep] ? 0).asInteger,
-                sourceCount: if(loadN >= 4, { 1 }, { voices.clip(1, lane[\materials].size.max(1)) }),
+                sourceCount: if(mod == \percussive, { 1 }, {
+                    if(loadN >= 4, { 1 }, { voices.clip(1, lane[\materials].size.max(1)) });
+                }),
                 panBias: (event[\panBias] ? 0.0).asFloat.clip(-0.55, 0.55),
-                decayScale: (event[\decayScale] ? 1.0).asFloat.clip(0.25, 2.4),
+                decayScale: if(mod == \percussive, {
+                    (event[\decayScale] ? 0.5).asFloat.clip(0.18, 0.58);
+                }, {
+                    (event[\decayScale] ? 1.0).asFloat.clip(0.25, 2.4);
+                }),
                 hits: if(loadN >= 3, { 1 }, { (event[\hits] ? 1).asInteger.clip(1, 4) })
             );
         });
@@ -684,19 +695,20 @@
             ~eapFx[\pedalboard][\makeSynthDefs].value(~eapFx[\pedalboard]);
         };
 
-        SynthDef(\eapSceneMaster, { |in = 0, out = 0, amp = 0.86,
+        SynthDef(\eapSceneMaster, { |in = 0, reverbIn = 0, out = 0, amp = 0.86,
             wet = 0.24, room = 0.55, damp = 0.45, decay = 3.2,
             lowCut = 120, highCut = 9500, modDepth = 0.08, bright = 0.75,
             masterVol = 0.82, overdrive = 0.0, bitDepth = 1.0, saturation = 0.12,
             compProfile = 0|
-            var dry, pre, verb, sig, driven, saturated, folded, grimy, sat, srFreq, levels, degraded;
+            var dry, send, pre, verb, sig, driven, saturated, folded, grimy, sat, srFreq, levels, degraded;
             var profile, threshold, slopeAbove, clampTime, relaxTime, makeup;
             dry = LeakDC.ar(In.ar(in, 2));
-            pre = HPF.ar(LPF.ar(dry, highCut.clip(1200, 18000)), lowCut.clip(20, 1200));
+            send = LeakDC.ar(In.ar(reverbIn, 2));
+            pre = HPF.ar(LPF.ar(send, highCut.clip(1200, 18000)), lowCut.clip(20, 1200));
             verb = JPverb.ar(pre, decay.clip(0.7, 12), damp.clip(0.05, 0.95),
                 room.clip(0.15, 1.2), 0.72, modDepth.clip(0.0, 0.6), 2.0,
                 1, bright.clip(0.1, 1.2), 1, lowCut.clip(20, 1200), highCut.clip(1200, 18000));
-            sig = XFade2.ar(dry, verb, (wet.clip(0, 0.9) * 2) - 1);
+            sig = dry + (verb * wet.clip(0, 0.9));
             driven = tanh(sig * overdrive.linexp(0, 1, 1.0, 7.0));
             sig = XFade2.ar(sig, driven, (overdrive.clip(0, 1) * 2) - 1);
             sat = saturation.clip(0, 1);
@@ -730,35 +742,60 @@
 
         SynthDef(\eapLanePlaitsNote, { |out = 0, pitch = 60, engine = 0, harm = 0.4,
             timbre = 0.5, morph = 0.5, level = 0.8, decay = 0.8, colour = 0.5,
-            amp = 0.1, pan = 0|
-            var trig, sig, env;
+            amp = 0.1, pan = 0, envTail = 0.25, modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
+            var trig, sig, env, lfo, drift, h, t, m, c;
             trig = Trig1.kr(1, 0.01);
-            sig = MiPlaits.ar(pitch, engine, harm, timbre, morph, trig, level, 0, 0, 0, decay, colour);
-            env = EnvGen.kr(Env.linen(0.002, decay.max(0.05) + 0.2, 0.25), doneAction: 2);
+            lfo = Select.kr(modShape.clip(0, 3), [
+                SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
+            ]);
+            drift = LFNoise1.kr((modRate * 0.5).max(0.05));
+            h = (harm + (lfo * modDepth * 0.24) + (drift * modRand * 0.18)).clip(0, 1);
+            t = (timbre + (lfo * modDepth * 0.30) + (drift * modRand * 0.24)).clip(0, 1);
+            m = (morph + (lfo * modDepth * 0.36) + (drift * modRand * 0.28)).clip(0, 1);
+            c = (colour + (lfo * modDepth * 0.22) + (drift * modRand * 0.18)).clip(0, 1);
+            sig = MiPlaits.ar(pitch, engine, h, t, m, trig, level, 0, 0, 0, decay, c);
+            env = EnvGen.kr(Env.linen(0.002, decay.max(0.015), envTail.clip(0.01, 0.3)), doneAction: 2);
             sig = Balance2.ar(sig[0], sig[1], pan, amp) * env;
             Out.ar(out, LeakDC.ar(sig));
         }).add;
 
         SynthDef(\eapLaneRingsNote, { |out = 0, pitch = 60, struct = 0.4,
             bright = 0.5, damp = 0.7, pos = 0.4, model = 0, poly = 2,
-            envDecay = 8.0, envRelease = 1.2, amp = 0.12, pan = 0|
-            var trig, exciter, sig, env;
+            envDecay = 8.0, envRelease = 1.2, amp = 0.12, pan = 0,
+            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
+            var trig, exciter, sig, env, lfo, drift, st, br, da, po;
             trig = Trig1.kr(1, 0.01);
+            lfo = Select.kr(modShape.clip(0, 3), [
+                SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
+            ]);
+            drift = LFNoise1.kr((modRate * 0.4).max(0.04));
+            st = (struct + (lfo * modDepth * 0.24) + (drift * modRand * 0.18)).clip(0, 1);
+            br = (bright + (lfo * modDepth * 0.28) + (drift * modRand * 0.22)).clip(0, 1);
+            da = (damp + (lfo * modDepth * 0.20) + (drift * modRand * 0.18)).clip(0, 1);
+            po = (pos + (lfo * modDepth * 0.30) + (drift * modRand * 0.22)).clip(0, 1);
             exciter = PinkNoise.ar(0.03) * Decay2.kr(trig, 0.004, 0.09);
-            sig = MiRings.ar(exciter, trig, pitch, struct, bright, damp, pos, model, poly, 1, 0);
+            sig = MiRings.ar(exciter, trig, pitch, st, br, da, po, model, poly, 1, 0);
             env = EnvGen.kr(Env.linen(0.002, envDecay.max(0.04), envRelease.max(0.02)), doneAction: 2);
             sig = Balance2.ar(sig[0], sig[1], pan, amp) * env;
             Out.ar(out, LeakDC.ar(sig));
         }).add;
 
         SynthDef(\eapLaneFoldNote, { |out = 0, freq = 220, fold = 1.0, fm = 0.1,
-            cutoff = 2200, decay = 1.0, amp = 0.1, pan = 0|
-            var env, mod, sig;
+            cutoff = 2200, decay = 1.0, amp = 0.1, pan = 0,
+            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
+            var env, mod, sig, lfo, drift, f, fmAmt, cut;
             env = EnvGen.kr(Env.perc(0.004, decay, curve: -4), doneAction: 2);
-            mod = SinOsc.ar(freq * [1.5, 2, 3].choose, 0, freq * fm);
+            lfo = Select.kr(modShape.clip(0, 3), [
+                SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
+            ]);
+            drift = LFNoise1.kr((modRate * 0.7).max(0.06));
+            f = (fold + (lfo * modDepth * 1.6) + (drift * modRand * 1.2)).clip(0.05, 4.0);
+            fmAmt = (fm + (lfo * modDepth * 0.22) + (drift * modRand * 0.18)).clip(0, 1.2);
+            cut = (cutoff * (1 + (lfo * modDepth * 1.2) + (drift * modRand * 0.8))).clip(120, 12000);
+            mod = SinOsc.ar(freq * [1.5, 2, 3].choose, 0, freq * fmAmt);
             sig = VarSaw.ar(freq + mod, 0, 0.45) + SinOsc.ar(freq * 0.5, 0, 0.25);
-            sig = Fold.ar(sig * (1 + (fold * 3)), -0.7, 0.7);
-            sig = RLPF.ar(sig, cutoff.clip(120, 10000), 0.72);
+            sig = Fold.ar(sig * (1 + (f * 3)), -0.7, 0.7);
+            sig = RLPF.ar(sig, cut, 0.72);
             sig = Pan2.ar(sig * env * amp, pan);
             Out.ar(out, LeakDC.ar(sig));
         }).add;
@@ -813,13 +850,23 @@
             waveFolds = 1.0, fm1Ratio = 0.66, fm2Ratio = 3.3, fm1Amount = 0.12,
             fm2Amount = 0.08, attack = 0.02, peak = 3600, decay = 1.2,
             reverbMix = 0.35, foldMix = 0.5, body = 0.2, air = 0.01,
-            filterRq = 0.7, toneTilt = 0.5, amp = 0.1, pan = 0|
+            filterRq = 0.7, toneTilt = 0.5, amp = 0.1, pan = 0,
+            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
             var nyquist = SampleRate.ir * 0.5, signal, folded, bodySig, airSig, mod1, mod2, modFreq;
-            var sinOsc, triOsc, additiveOsc, additivePhase, filterEnvLow, env, rq;
-            fm1Amount = fm1Amount.squared;
-            fm2Amount = fm2Amount.squared;
-            mod1 = SinOsc.ar(freq * fm1Ratio * LFNoise2.kr(0.1, 0.001, 1), 0, fm1Amount * 22 * freq);
-            mod2 = SinOsc.ar(freq * fm2Ratio * LFNoise2.kr(0.1, 0.005, 1), 0, fm2Amount * 12 * freq);
+            var sinOsc, triOsc, additiveOsc, additivePhase, filterEnvLow, env, rq, lfo, drift;
+            var shape, folds, fm1, fm2, peakMod, tilt;
+            lfo = Select.kr(modShape.clip(0, 3), [
+                SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
+            ]);
+            drift = LFNoise1.kr((modRate * 0.55).max(0.05));
+            shape = (waveShape + (lfo * modDepth * 0.28) + (drift * modRand * 0.20)).clip(0, 1);
+            folds = (waveFolds + (lfo * modDepth * 1.1) + (drift * modRand * 0.8)).clip(0, 3);
+            fm1 = (fm1Amount + (lfo.abs * modDepth * 0.18) + (drift.abs * modRand * 0.14)).clip(0, 1).squared;
+            fm2 = (fm2Amount + (lfo.abs * modDepth * 0.14) + (drift.abs * modRand * 0.12)).clip(0, 1).squared;
+            peakMod = (peak * (1 + (lfo * modDepth * 1.0) + (drift * modRand * 0.75))).clip(120, 12000);
+            tilt = (toneTilt + (lfo * modDepth * 0.24) + (drift * modRand * 0.18)).clip(0, 1);
+            mod1 = SinOsc.ar(freq * fm1Ratio * LFNoise2.kr(0.1, 0.001, 1), 0, fm1 * 22 * freq);
+            mod2 = SinOsc.ar(freq * fm2Ratio * LFNoise2.kr(0.1, 0.005, 1), 0, fm2 * 12 * freq);
             modFreq = (freq + mod1 + mod2).clip(20, nyquist);
             sinOsc = SinOsc.ar(modFreq, 0, 0.5);
             triOsc = VarSaw.ar(modFreq, 0, 0.5, 0.5);
@@ -827,23 +874,23 @@
             additiveOsc = Mix.fill(12, { |index|
                 var harmonic = index + 1;
                 (sin(additivePhase * harmonic % 2pi) / harmonic)
-                    * (harmonic % 2 + waveShape.linlin(0.666666, 1, 0, 1)).min(1);
+                    * (harmonic % 2 + shape.linlin(0.666666, 1, 0, 1)).min(1);
             });
-            signal = LinSelectX.ar(waveShape.clip(0, 1) * 3, [sinOsc, triOsc, additiveOsc]);
-            folded = Fold.ar(signal * (1 + (waveFolds.clip(0, 3) * 2)), -0.5, 0.5);
+            signal = LinSelectX.ar(shape * 3, [sinOsc, triOsc, additiveOsc]);
+            folded = Fold.ar(signal * (1 + (folds * 2)), -0.5, 0.5);
             signal = XFade2.ar(signal, folded, (foldMix.clip(0, 1) * 2) - 1);
             bodySig = SinOsc.ar(freq * 0.5, 0, body.clip(0, 1) * 0.22);
-            airSig = BPF.ar(PinkNoise.ar(air.clip(0, 0.08)), toneTilt.linexp(0, 1, 1800, 9500), 0.45);
-            signal = LPF.ar(signal + bodySig + airSig, toneTilt.linexp(0, 1, 4500, 15000));
-            filterEnvLow = peak.min(300);
+            airSig = BPF.ar(PinkNoise.ar(air.clip(0, 0.08)), tilt.linexp(0, 1, 1800, 9500), 0.45);
+            signal = LPF.ar(signal + bodySig + airSig, tilt.linexp(0, 1, 4500, 15000));
+            filterEnvLow = peakMod.min(300);
             rq = filterRq.clip(0.18, 0.95);
             env = EnvGen.ar(Env([0, 1, 0], [attack.max(0.003), decay.max(0.03)], [4, -8]), doneAction: 2);
-            signal = RLPF.ar(signal, env.linlin(0, 1, filterEnvLow, peak.clip(120, 10000)), rq) * env;
+            signal = RLPF.ar(signal, env.linlin(0, 1, filterEnvLow, peakMod), rq) * env;
             signal = signal * (1 + (reverbMix.clip(0, 0.7) * 0.18));
             Out.ar(out, Pan2.ar(tanh(signal * amp * 2.1).softclip, pan));
         }).add;
 
-        SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, pit = 0, pos = 0.5,
+        SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, sendOut = 0, send = 0.5, pit = 0, pos = 0.5,
             size = 0.25, dens = 0.4, tex = 0.5, drywet = 0.55, in_gain = 1,
             spread = 0.5, rvb = 0.2, fb = 0.1, freeze = 0, mode = 0, lofi = 0,
             amp = 0.84, pan = 0, fadeTime = 0.05|
@@ -852,13 +899,17 @@
             sig = MiClouds.ar(source, pit, pos, size, dens, tex, drywet, in_gain,
                 spread, rvb, fb, freeze, mode, lofi, 0);
             sig = Balance2.ar(sig[0], sig[1], Lag.kr(pan, fadeTime).clip(-1, 1), Lag.kr(amp, fadeTime));
-            Out.ar(out, Limiter.ar(LeakDC.ar(sig), 0.9, 0.01));
+            sig = Limiter.ar(LeakDC.ar(sig), 0.9, 0.01);
+            Out.ar(out, sig);
+            Out.ar(sendOut, sig * Lag.kr(send, fadeTime).clip(0, 1));
         }).add;
 
-        SynthDef(\eapLaneOut, { |in = 0, out = 0, amp = 0.78, pan = 0, fadeTime = 0.05|
+        SynthDef(\eapLaneOut, { |in = 0, out = 0, sendOut = 0, amp = 0.78, pan = 0, send = 0.5, fadeTime = 0.05|
             var sig = LeakDC.ar(In.ar(in, 2));
             sig = Balance2.ar(sig[0], sig[1], Lag.kr(pan, fadeTime).clip(-1, 1), Lag.kr(amp, fadeTime));
-            Out.ar(out, Limiter.ar(sig, 0.9, 0.01));
+            sig = Limiter.ar(sig, 0.9, 0.01);
+            Out.ar(out, sig);
+            Out.ar(sendOut, sig * Lag.kr(send, fadeTime).clip(0, 1));
         }).add;
 
         SynthDef(\eapTestTone, { |out = 0, freq = 440, dur = 1.2, amp = 0.45|
@@ -892,6 +943,9 @@
                     ++ " cpu=" ++ (lane[\cpuClass] ? \normal)
                     ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
                     ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
+                    ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
+                    ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
+                    ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
                     ++ " routine=" ++ lane[\routine].notNil
                     ++ " ticks=" ++ (lane[\tickCount] ? 0)
                     ++ " triggers=" ++ (lane[\triggerCount] ? 0)
@@ -980,7 +1034,7 @@
         var pool;
         var chain;
         pool = switch(modifier,
-            \percussive, { [\delay, \bitcrusher, \tremolo, \autowah, \phaser, \ringmod] },
+            \percussive, { [\bitcrusher, \tremolo, \autowah, \ringmod, \wavefolder] },
             \drone, { [\reverb, \lofi, \chorus, \delay, \vibrato, \phaser] },
             \harmonic, { [\chorus, \vibrato, \reverb, \phaser, \delay, \tremolo] },
             \chaos, { [\ringmod, \wavefolder, \bitcrusher, \lofi, \autowah, \delay, \reverb] },
@@ -1093,13 +1147,7 @@
         });
         switch(modifier,
             \percussive, {
-                materialPool = [
-                    \fold, \plaits, \rings, \passersby,
-                    \fold, \plaits, \rings, \passersby, \plaits, \fold
-                ];
-                if(dexedAvailable, {
-                    materialPool = materialPool ++ [\dexed, \dexed];
-                });
+                materialPool = [\fold, \fold, \fold, \plaits, \plaits, \plaits, \plaits, \passersby];
                 register = [[36, 72], [40, 76], [45, 84], [48, 88]].choose;
                 minGap = minGap * 0.35;
                 gap = self[\rand].value(self, 0.06, 0.32);
@@ -1109,8 +1157,8 @@
                 rhythmProfile = [\grid16, \shuffle16, \euclid, \breakbeat, \clave].choose;
                 pulse = self[\rand].value(self, 0.055, 0.12);
                 swing = self[\rand].value(self, 0.08, 0.48);
-                materialCount = 2;
-                plaitsModels = Array.fill(rrand(1, 3), { self[\plaitsPercussiveModels].choose });
+                materialCount = 1;
+                plaitsModels = Array.fill(1, { self[\plaitsPercussiveModels].choose });
                 molly[\oscWaveShape] = [0, 0, 1, 1, 2].choose;
                 molly[\envAttack] = self[\exprand].value(self, 0.001, 0.02);
                 molly[\envDecay] = self[\exprand].value(self, 0.05, 0.55);
@@ -1120,10 +1168,10 @@
                 molly[\lpFilterModEnv] = self[\rand].value(self, 0.12, 0.42);
                 molly[\subOscLevel] = self[\rand].value(self, 0.0, 0.35);
                 passersby[\attack] = self[\exprand].value(self, 0.001, 0.025);
-                passersby[\decay] = self[\exprand].value(self, 0.06, 0.55);
+                passersby[\decay] = self[\exprand].value(self, 0.035, 0.26);
                 passersby[\peak] = self[\exprand].value(self, 700, 7200);
-                passersby[\reverbMix] = self[\rand].value(self, 0.0, 0.16);
-                passersby[\body] = self[\rand].value(self, 0.04, 0.38);
+                passersby[\reverbMix] = self[\rand].value(self, 0.0, 0.04);
+                passersby[\body] = self[\rand].value(self, 0.0, 0.16);
                 passersby[\foldMix] = self[\rand].value(self, 0.18, 0.72);
                 passersby[\air] = self[\exprand].value(self, 0.004, 0.035);
                 rings = (
@@ -1133,8 +1181,8 @@
                     bright: self[\rand].value(self, 0.35, 0.92),
                     damp: self[\rand].value(self, 0.58, 0.98),
                     pos: self[\rand].value(self, 0.12, 0.78),
-                    envDecay: self[\exprand].value(self, 0.08, 1.1),
-                    envRelease: self[\exprand].value(self, 0.04, 0.42)
+                    envDecay: self[\exprand].value(self, 0.035, 0.22),
+                    envRelease: self[\exprand].value(self, 0.02, 0.12)
                 );
                 dexed[\velocity] = self[\rand].value(self, 72, 118).round(1);
                 dexed[\durScale] = self[\exprand].value(self, 0.06, 0.42);
@@ -1237,7 +1285,7 @@
         });
         if(materials.select({ |source| source != \dexed }).isEmpty, {
             materials[0] = switch(modifier,
-                \percussive, { [\fold, \plaits, \rings].choose },
+                \percussive, { [\fold, \plaits, \passersby].choose },
                 \chaos, { [\fold, \passersby, \plaits].choose },
                 \drone, { [\rings, \passersby, \molly].choose },
                 \harmonic, { [\rings, \plaits, \molly].choose },
@@ -1278,6 +1326,9 @@
             cpuClass: cpuClass,
             level: 1.0,
             pan: 0.0,
+            density: 1.0,
+            timbreMotion: 0.0,
+            reverbSend: 0.5,
             amp: (0.28 / total.sqrt).clip(0.10, 0.26),
             plaitsModels: plaitsModels,
             ringsModel: rings[\model],
@@ -1317,11 +1368,12 @@
         if(lane[\fx] == \clouds) {
             var c = lane[\clouds];
             var synth = Synth.tail(lane[\group], \eapLaneCloudsFx, [
-                \in, currentIn, \out, self[\masterBus].index,
+                \in, currentIn, \out, self[\masterBus].index, \sendOut, self[\reverbBus].index,
                 \pit, c[\pit], \pos, c[\pos], \size, c[\size], \dens, c[\dens],
                 \tex, c[\tex], \drywet, c[\drywet], \spread, c[\spread],
                 \rvb, c[\rvb], \fb, c[\fb], \mode, c[\mode], \lofi, c[\lofi],
-                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0
+                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0,
+                \send, lane[\reverbSend] ? 0.5
             ]);
             lane[\outSynth] = synth;
             lane[\synths].add(synth);
@@ -1342,8 +1394,9 @@
                 addAction = \addAfter;
             });
             outSynth = Synth.new(\eapLaneOut, [
-                \in, currentIn, \out, self[\masterBus].index,
-                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0
+                \in, currentIn, \out, self[\masterBus].index, \sendOut, self[\reverbBus].index,
+                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0,
+                \send, lane[\reverbSend] ? 0.5
             ], target, \addAfter);
             lane[\synths].add(outSynth);
             lane[\outSynth] = outSynth;
@@ -1355,7 +1408,8 @@
         if(lane.notNil and: { lane[\outSynth].notNil }) {
             lane[\outSynth].set(
                 \amp, (lane[\amp] ? 0.18) * (lane[\level] ? 1.0),
-                \pan, lane[\pan] ? 0.0
+                \pan, lane[\pan] ? 0.0,
+                \send, lane[\reverbSend] ? 0.5
             );
         };
         lane;
@@ -1413,8 +1467,10 @@
                     if(event.notNil) {
                         if(lane[\group].notNil) {
                             voices = (event[\sourceCount] ? 1).asInteger.clip(1, 4);
-                            if(self[\laneMayTrigger].value(self, lane, voices)) {
-                                self[\triggerLane].value(self, lane, event);
+                            if((event[\isRest] ? 0).asInteger == 0) {
+                                if(self[\laneMayTrigger].value(self, lane, voices)) {
+                                    self[\triggerLane].value(self, lane, event);
+                                };
                             };
                         };
                     };
@@ -1446,6 +1502,13 @@
         var decayScale = (ev[\decayScale] ? 1).asFloat.clip(0.35, 2.4);
         var isPerc = lane[\soundModifier] == \percussive;
         var pitch = self[\choosePitch].value(self, lane, scaleStep);
+        var timbreMotion = (lane[\timbreMotion] ? 0.0).asFloat.clip(0, 1);
+        var motionStage = (timbreMotion * 7).round(1).asInteger.clip(0, 7);
+        var modDepth = [0.0, 0.035, 0.07, 0.12, 0.18, 0.26, 0.36, 0.50][motionStage];
+        var modRate = [0.05, 0.08, 0.13, 0.21, 0.34, 0.55, 0.89, 1.44][motionStage]
+            * self[\exprand].value(self, 0.78, 1.28);
+        var modShape = [0, 0, 1, 1, 2, 2, 3, 3][motionStage];
+        var modRand = [0.0, 0.0, 0.03, 0.06, 0.10, 0.16, 0.24, 0.34][motionStage];
         lane[\triggerCount] = (lane[\triggerCount] ? 0) + 1;
         if(lane[\triggerLog].isNil, {
             lane[\triggerLog] = true;
@@ -1460,10 +1523,12 @@
                     \harm, if(isPerc, { self[\rand].value(self, 0.02, 0.55) }, { self[\rand].value(self, 0.05, 0.95) }),
                     \timbre, if(isPerc, { self[\rand].value(self, 0.22, 0.88) }, { self[\rand].value(self, 0.10, 0.98) }),
                     \morph, if(isPerc, { self[\rand].value(self, 0.05, 0.58) }, { self[\rand].value(self, 0.08, 0.98) }),
-                    \decay, (if(isPerc, { self[\exprand].value(self, 0.04, 0.72) }, { self[\exprand].value(self, 0.08, 5.8) })) * decayScale,
+                    \decay, (if(isPerc, { self[\exprand].value(self, 0.018, 0.24) }, { self[\exprand].value(self, 0.08, 5.8) })) * decayScale,
                     \colour, if(isPerc, { self[\rand].value(self, 0.35, 0.92) }, { self[\rand].value(self, 0.15, 0.90) }),
                     \amp, lane[\amp] * accent,
-                    \pan, (self[\rand].value(self, -0.75, 0.75) + panBias).clip(-1, 1)
+                    \pan, (self[\rand].value(self, -0.75, 0.75) + panBias).clip(-1, 1),
+                    \envTail, if(isPerc, { 0.035 }, { 0.25 }),
+                    \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
             if(source == \rings) {
@@ -1483,7 +1548,8 @@
                     \model, r[\model], \poly, r[\poly],
                     \envDecay, r[\envDecay] * decayScale, \envRelease, r[\envRelease],
                     \amp, lane[\amp] * accent * (if(isPerc, { self[\rand].value(self, 0.85, 1.35) }, { self[\rand].value(self, 0.70, 1.25) })),
-                    \pan, (self[\rand].value(self, -0.65, 0.65) + panBias).clip(-1, 1)
+                    \pan, (self[\rand].value(self, -0.65, 0.65) + panBias).clip(-1, 1),
+                    \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
             if(source == \fold) {
@@ -1491,27 +1557,32 @@
                     \out, lane[\sourceBus].index, \freq, pitch.midicps,
                     \fold, if(isPerc, { self[\rand].value(self, 0.45, 2.6) }, { self[\rand].value(self, 0.25, 2.8) }),
                     \fm, if(isPerc, { self[\rand].value(self, 0.08, 0.75) }, { self[\rand].value(self, 0.02, 0.60) }),
-                    \cutoff, if(isPerc, { self[\exprand].value(self, 650, 8200) }, { self[\exprand].value(self, 450, 9000) }),
-                    \decay, (if(isPerc, { self[\exprand].value(self, 0.05, 0.55) }, { self[\exprand].value(self, 0.10, 3.8) })) * decayScale,
+                    \cutoff, if(isPerc, { self[\exprand].value(self, 900, 9500) }, { self[\exprand].value(self, 450, 9000) }),
+                    \decay, (if(isPerc, { self[\exprand].value(self, 0.025, 0.22) }, { self[\exprand].value(self, 0.10, 3.8) })) * decayScale,
                     \amp, lane[\amp] * accent * (if(isPerc, { 0.88 }, { 0.75 })),
-                    \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
+                    \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1),
+                    \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
             if(source == \molly) {
                 var m = lane[\molly];
                 Synth.head(lane[\group], \eapLaneMollyNote, [
                     \out, lane[\sourceBus].index, \freq, pitch.midicps,
-                    \oscWaveShape, m[\oscWaveShape], \pwMod, m[\pwMod],
-                    \freqModLfo, m[\freqModLfo], \freqModEnv, m[\freqModEnv],
+                    \oscWaveShape, (m[\oscWaveShape] + (modRand * self[\rand].value(self, -0.8, 0.8))).clip(0, 2),
+                    \pwMod, (m[\pwMod] + (modDepth * 0.55)).clip(0, 1),
+                    \freqModLfo, (m[\freqModLfo] + (modDepth * 0.32)).clip(0, 0.7),
+                    \freqModEnv, (m[\freqModEnv] + (modRand * 0.18)).clip(0, 0.8),
                     \mainOscLevel, m[\mainOscLevel], \subOscLevel, m[\subOscLevel],
-                    \subOscDetune, m[\subOscDetune], \noiseLevel, m[\noiseLevel],
+                    \subOscDetune, m[\subOscDetune], \noiseLevel, (m[\noiseLevel] + (modRand * 0.12)).clip(0, 0.45),
                     \hpFilterCutoff, m[\hpFilterCutoff], \lpFilterCutoff, m[\lpFilterCutoff],
-                    \lpFilterResonance, m[\lpFilterResonance], \lpFilterModEnv, m[\lpFilterModEnv],
-                    \lpFilterTracking, m[\lpFilterTracking], \lfoFreq, m[\lfoFreq],
-                    \lfoWaveShape, m[\lfoWaveShape], \envAttack, m[\envAttack],
+                    \lpFilterResonance, (m[\lpFilterResonance] + (modDepth * 0.28)).clip(0, 1),
+                    \lpFilterModEnv, (m[\lpFilterModEnv] + (modDepth * 0.55)).clip(0, 1),
+                    \lpFilterTracking, m[\lpFilterTracking], \lfoFreq, modRate,
+                    \lfoWaveShape, modShape.clip(0, 4), \envAttack, m[\envAttack],
                     \envDecay, m[\envDecay], \envSustain, m[\envSustain],
                     \envRelease, m[\envRelease], \ringModFreq, m[\ringModFreq],
-                    \ringModMix, m[\ringModMix], \ampMod, m[\ampMod],
+                    \ringModMix, (m[\ringModMix] + (modRand * 0.22)).clip(0, 1),
+                    \ampMod, (m[\ampMod] + (modDepth * 0.45)).clip(0, 0.9),
                     \amp, lane[\amp] * accent * 0.85,
                     \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
                 ]);
@@ -1527,7 +1598,8 @@
                     \reverbMix, p[\reverbMix], \foldMix, p[\foldMix], \body, p[\body],
                     \air, p[\air], \filterRq, p[\filterRq], \toneTilt, p[\toneTilt],
                     \amp, lane[\amp] * accent * 0.85,
-                    \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1)
+                    \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1),
+                    \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
             if(source == \dexed) {
@@ -1654,6 +1726,46 @@
         });
     };
 
+    ~setSlotDensity = { |self, slot, value|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var lane = self[\slots][index - 1];
+        var density = value.asFloat.clip(0.05, 1.0);
+        if(lane.notNil, {
+            lane[\density] = density;
+            ("EAP slot " ++ index ++ " density=" ++ density.round(0.001)).postln;
+            1;
+        }, {
+            0;
+        });
+    };
+
+    ~setSlotTimbreMotion = { |self, slot, value|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var lane = self[\slots][index - 1];
+        var motion = value.asFloat.clip(0.0, 1.0);
+        if(lane.notNil, {
+            lane[\timbreMotion] = motion;
+            ("EAP slot " ++ index ++ " timbreMotion=" ++ motion.round(0.001)).postln;
+            1;
+        }, {
+            0;
+        });
+    };
+
+    ~setSlotReverbSend = { |self, slot, value|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var lane = self[\slots][index - 1];
+        var send = value.asFloat.clip(0.0, 1.0);
+        if(lane.notNil, {
+            lane[\reverbSend] = send;
+            self[\applyLaneOutput].value(self, lane);
+            ("EAP slot " ++ index ++ " reverbSend=" ++ send.round(0.001)).postln;
+            1;
+        }, {
+            0;
+        });
+    };
+
     ~reverbArg = { |self, param, value|
         var v = value.asFloat.clip(0, 1);
         switch(param,
@@ -1748,7 +1860,9 @@
                 phase: lane[\phase], gap: lane[\gap], densitySkew: lane[\densitySkew],
                 restProb: lane[\restProb], volatility: lane[\volatility],
                 rhythmProfile: lane[\rhythmProfile], pulse: lane[\pulse], swing: lane[\swing],
-                amp: lane[\amp], level: lane[\level], pan: lane[\pan], cpuClass: lane[\cpuClass],
+                amp: lane[\amp], level: lane[\level], pan: lane[\pan], density: lane[\density],
+                timbreMotion: lane[\timbreMotion], reverbSend: lane[\reverbSend],
+                cpuClass: lane[\cpuClass],
                 plaitsModels: lane[\plaitsModels].copy,
                 ringsModel: lane[\ringsModel], rings: if(lane[\rings].notNil, { lane[\rings].copy }, { nil }),
                 soundModifier: lane[\soundModifier], lastDegree: lane[\lastDegree],
@@ -1783,6 +1897,9 @@
         lane[\swing] = lane[\swing] ? 0.0;
         lane[\level] = lane[\level] ? 1.0;
         lane[\pan] = lane[\pan] ? 0.0;
+        lane[\density] = lane[\density] ? 1.0;
+        lane[\timbreMotion] = lane[\timbreMotion] ? 0.0;
+        lane[\reverbSend] = lane[\reverbSend] ? 0.5;
         lane[\cpuClass] = lane[\cpuClass] ? \normal;
         lane[\plaitsModels] = (lane[\plaitsModels] ? [0]).collect({ |model|
             if(self[\plaitsModelPool].includes(model), { model }, { self[\plaitsModelPool].choose });
@@ -1906,10 +2023,37 @@
         });
     };
 
+    ~performanceStateForLane = { |lane|
+        if(lane.isNil, {
+            nil;
+        }, {
+            (
+                level: lane[\level] ? 1.0,
+                pan: lane[\pan] ? 0.0,
+                density: lane[\density] ? 1.0,
+                timbreMotion: lane[\timbreMotion] ? 0.0,
+                reverbSend: lane[\reverbSend] ? 0.5
+            );
+        });
+    };
+
+    ~applyPerformanceState = { |self, lane, state|
+        if(lane.notNil and: { state.notNil }) {
+            lane[\level] = (state[\level] ? 1.0).asFloat.clip(0.0, 1.0);
+            lane[\pan] = (state[\pan] ? 0.0).asFloat.clip(-1.0, 1.0);
+            lane[\density] = (state[\density] ? 1.0).asFloat.clip(0.05, 1.0);
+            lane[\timbreMotion] = (state[\timbreMotion] ? 0.0).asFloat.clip(0.0, 1.0);
+            lane[\reverbSend] = (state[\reverbSend] ? 0.5).asFloat.clip(0.0, 1.0);
+            self[\applyLaneOutput].value(self, lane);
+        };
+        lane;
+    };
+
     ~generateSlot = { |self, slot, total = nil, modifier = nil|
         var index = slot.asInteger.clip(1, self[\maxScenes]);
         var activeTotal;
         var oldLane = self[\slots][index - 1];
+        var performanceState = self[\performanceStateForLane].value(oldLane);
         var lane;
         if(modifier.isNil, {
             ("EAP slot " ++ index ++ " generation ignored: modifier required").postln;
@@ -1926,6 +2070,7 @@
                 nil;
             });
             lane = self[\randomLane].value(self, index, activeTotal, modifier);
+            self[\applyPerformanceState].value(self, lane, performanceState);
             self[\slots][index - 1] = lane;
             self[\startLane].value(self, lane);
             self[\lanes].add(lane);
@@ -1933,6 +2078,11 @@
             ("EAP slot " ++ index ++ " generated materials=" ++ lane[\materials].asString ++
                 " fx=" ++ lane[\fx] ++ " modifier=" ++ (lane[\soundModifier] ? \default)
                 ++ " rhythm=" ++ (lane[\rhythmProfile] ? \unknown)
+                ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
+                ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
+                ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
+                ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
+                ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
                 ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
             1;
         });
@@ -1991,6 +2141,7 @@
         if(self[\group].notNil) { self[\stop].value(self); };
         self[\group] = Group.tail(s);
         self[\masterBus] = Bus.audio(s, 2);
+        self[\reverbBus] = Bus.audio(s, 2);
         self[\makeSynthDefs].value(self);
         s.sync;
         self[\refreshDexed].value(self);
@@ -1998,7 +2149,9 @@
         self[\masterValues] = [0.82, 0.0, 1.0, 0.12, 0.0];
         self[\masterGroup] = Group.after(self[\group]);
         self[\externalInputSynth] = Synth.head(self[\masterGroup], \eapExternalInput, [\out, self[\masterBus].index, \amp, 0.0]);
-        self[\masterSynth] = Synth.tail(self[\masterGroup], \eapSceneMaster, [\in, self[\masterBus].index, \out, 0]);
+        self[\masterSynth] = Synth.tail(self[\masterGroup], \eapSceneMaster, [
+            \in, self[\masterBus].index, \reverbIn, self[\reverbBus].index, \out, 0
+        ]);
         self[\applyReverb].value(self);
         self[\applyMaster].value(self);
         self[\slots] = Array.fill(self[\maxScenes], { nil });
@@ -2011,6 +2164,7 @@
         if(self[\externalInputSynth].notNil) { self[\externalInputSynth].free; self[\externalInputSynth] = nil; };
         if(self[\masterSynth].notNil) { self[\masterSynth].free; self[\masterSynth] = nil; };
         if(self[\masterBus].notNil) { self[\masterBus].free; self[\masterBus] = nil; };
+        if(self[\reverbBus].notNil) { self[\reverbBus].free; self[\reverbBus] = nil; };
         if(self[\masterGroup].notNil) { self[\masterGroup].free; self[\masterGroup] = nil; };
         if(self[\group].notNil) { self[\group].free; self[\group] = nil; };
     };
