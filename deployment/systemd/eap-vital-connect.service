@@ -1,0 +1,17 @@
+[Unit]
+Description=Electroacoustic Playground Vital JACK wiring
+After=eap-jack.service eap-supercollider.service eap-vital.service
+Requires=eap-jack.service eap-supercollider.service
+Wants=eap-vital.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=we
+Group=audio
+Environment=JACK_NO_AUDIO_RESERVATION=1
+LimitMEMLOCK=infinity
+ExecStart=/usr/local/bin/eap-connect-vital-jack 80 0.5
+
+[Install]
+WantedBy=multi-user.target

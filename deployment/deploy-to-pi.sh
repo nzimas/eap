@@ -81,7 +81,7 @@ exec /usr/bin/python3 /opt/electroacoustic-playground/control/eap_launchpad.py "
 WRAPPER
 $SUDO chmod 0755 /usr/local/bin/eap-launchpad
 
-for unit in eap-jack eap-supercollider eap-sc-connect eap-launchpad eap-dexed eap-dexed-connect eap-console-status eap-k3-shutdown; do
+for unit in eap-jack eap-supercollider eap-sc-connect eap-launchpad eap-dexed eap-dexed-connect eap-vital eap-vital-connect eap-console-status eap-k3-shutdown; do
     if [[ -f "$REMOTE_ROOT/deployment/systemd/${unit}.service" ]]; then
         $SUDO install -m 0644 "$REMOTE_ROOT/deployment/systemd/${unit}.service" "/etc/systemd/system/${unit}.service"
     fi

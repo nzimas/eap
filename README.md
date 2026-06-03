@@ -5,7 +5,7 @@ Electroacoustic Playground is a bespoke Raspberry Pi/Fates instrument stack buil
 The current stack includes:
 
 - SuperCollider scene-slot engine with up to eight Launchpad-addressable scene slots.
-- Random scene generation from Plaits, Rings, Passersby, Molly, fold-based material, and optional external Dexed.
+- Random scene generation from Plaits, Rings, Passersby, Molly, fold-based material, optional external Dexed, and optional realtime Vital/Vitalium.
 - Per-scene pedalboard or Clouds-style effects, bounded for CPU safety.
 - Launchpad Mini Mk3 controller daemon with scene toggles, long-press regeneration, sound-type modifiers (CC 19/29/39/49), LED states, and auxiliary pages for reverb, tuning, master dynamics, and sessions.
 - Systemd units and deployment helpers for the Fates/Pi environment.
@@ -39,6 +39,14 @@ eap-build-dexed-cache /path/to/DX7_AllTheWeb.zip /opt/electroacoustic-playground
 ```
 
 At scene creation, EAP chooses a cached bank/program and applies only tiny operator-output-level changes before sending the patch to Dexed.
+
+## Vital/Vitalium Integration
+
+Vital/Vitalium is treated as a realtime external JACK/MIDI instrument, not as an offline renderer. EAP hosts the installed Vitalium LV2 plugin with `jalv`, chooses an installed Vitalium preset, applies small modifier-specific control tweaks, routes JACK audio back into SuperCollider inputs 3/4, and sends live MIDI notes from the same Pattern sequencer that drives the internal engines.
+
+Use `eap-install-vitalium` on the Pi to build and install Vitalium LV2 plus the `jalv` host and MIDI bridge dependencies. Vital remains visible on the engine selector, but runtime launch is gated behind `EAP_ENABLE_VITAL=1` because the current Pi/JACK profile xruns with live Vitalium enabled.
+
+On the Scales / Root Note page, engine row 4 now maps left to right as: Any, Plaits, Rings, Passersby, Molly, Fold, Dexed, Vital/Vitalium.
 
 ## Sound-Type Modifiers
 

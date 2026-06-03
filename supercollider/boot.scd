@@ -136,7 +136,7 @@ s.waitForBoot({
     }, '/eap/tuning');
 
     OSCdef(\eapSourceEngine, { |msg|
-        var code = (msg[1] ? 0).asInteger.clip(0, 6);
+        var code = (msg[1] ? 0).asInteger.clip(0, 7);
         ~eapScenes[\setSourceEnginePreference].value(~eapScenes, code);
     }, '/eap/engine');
 

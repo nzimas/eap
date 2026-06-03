@@ -17,6 +17,8 @@
     ~masterValues = nil;
     ~dexedMidi = nil;
     ~dexedAvailable = false;
+    ~vitalMidi = nil;
+    ~vitalAvailable = false;
     ~scaleIndex = 0;
     ~rootNote = 0;
     ~sourceEnginePreference = nil;
@@ -45,7 +47,7 @@
     ];
 
     ~soundModifierSymbols = [\percussive, \drone, \harmonic, \chaos];
-    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \fold, \dexed];
+    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \fold, \dexed, \vital];
 
     ~modifierFromCode = { |self, code|
         var index = code.asInteger;
@@ -1025,6 +1027,75 @@
         result;
     };
 
+    ~vitalRuntimeAvailable = { |self|
+        "sh -lc '[ \"${EAP_ENABLE_VITAL:-0}\" = \"1\" ] && command -v jalv >/dev/null 2>&1 && lv2ls 2>/dev/null | grep -qx \"urn:distrho:vitalium\" && echo yes'".unixCmdGetStdOut.contains("yes");
+    };
+
+    ~refreshVital = { |self|
+        var destination;
+        var alsaState;
+        if(MIDIClient.initialized.not, { MIDIClient.init; });
+        destination = MIDIClient.destinations.detect({ |endpoint|
+            var label = (endpoint.device.asString ++ " " ++ endpoint.name.asString).toLower;
+            label.contains("vital");
+        });
+        if(destination.notNil, {
+            if(self[\vitalMidi].isNil, {
+                self[\vitalMidi] = MIDIOut.newByName(destination.device, destination.name);
+                ("EAP Vital MIDI connected: " ++ destination.device ++ " / " ++ destination.name).postln;
+            });
+            self[\vitalAvailable] = true;
+        }, {
+            alsaState = "aconnect -l 2>/dev/null".unixCmdGetStdOut.toLower;
+            if(alsaState.contains("vital"), {
+                if(self[\vitalMidi].isNil, {
+                    self[\vitalMidi] = MIDIOut(0);
+                    "EAP Vital MIDI using SuperCollider out0 subscription".postln;
+                });
+                self[\vitalAvailable] = true;
+            }, {
+                var jackState = "jack_lsp -c 2>/dev/null".unixCmdGetStdOut.toLower;
+                if(jackState.contains("eap-vital:lv2_events_in") and: { jackState.contains("supercollider") and: { jackState.contains("out0") } }, {
+                    if(self[\vitalMidi].isNil, {
+                        self[\vitalMidi] = MIDIOut(0);
+                        "EAP Vital MIDI using bridged SuperCollider out0 -> JACK MIDI".postln;
+                    });
+                    self[\vitalAvailable] = true;
+                }, {
+                    if(self[\vitalAvailable], { "EAP Vital MIDI route disappeared".postln; });
+                    self[\vitalMidi] = nil;
+                    self[\vitalAvailable] = false;
+                });
+            });
+        });
+        self[\vitalAvailable];
+    };
+
+    ~loadVitalPatch = { |self, seed = 1, slot = 1, profile = nil|
+        var cmd = "/usr/local/bin/eap-vital-preset --seed " ++ seed.asInteger.asString
+            ++ " --slot " ++ slot.asInteger.clip(1, self[\maxScenes]).asString
+            ++ " --profile " ++ (profile ? \default).asSymbol.asString;
+        var result = cmd.unixCmdGetStdOut.stripWhiteSpace;
+        if(result.notEmpty, { ("EAP " ++ result).postln; });
+        "/usr/local/bin/eap-connect-vital-jack 30 0.25".unixCmdGetStdOut;
+        self[\refreshVital].value(self);
+        result;
+    };
+
+    ~sendVitalNote = { |self, note = 60, velocity = 80, duration = 0.6|
+        var midi = self[\vitalMidi];
+        if(midi.isNil, { self[\refreshVital].value(self); midi = self[\vitalMidi]; });
+        if(midi.notNil, {
+            var pitch = note.asInteger.clip(0, 127);
+            var vel = velocity.asInteger.clip(1, 127);
+            midi.noteOn(0, pitch, vel);
+            Routine({
+                duration.asFloat.clip(0.04, 12.0).wait;
+                midi.noteOff(0, pitch, 0);
+            }).play(SystemClock);
+        });
+    };
+
     ~chooseFxBackend = { |self, index, total, modifier|
         var allowClouds = total <= 2 and: { self[\hasActiveCloud].value(self).not };
         if(allowClouds.not, {
@@ -1156,9 +1227,23 @@
         var dexedPatchSeed = dexed[\patchSeed];
         var dexedPatchInfo = "";
         var dexedAvailable = if(enginePreference == \dexed, { self[\refreshDexed].value(self) }, { false });
+        var vital = (
+            velocity: self[\rand].value(self, 50, 100).round(1),
+            durScale: self[\exprand].value(self, 0.28, 2.5),
+            octaveBias: [-12, 0, 0, 12].choose,
+            patchSeed: rrand(1, 2147483000),
+            patchInfo: "",
+            patchProfile: modifier ? \default
+        );
+        var vitalPatchSeed = vital[\patchSeed];
+        var vitalPatchInfo = "";
+        var vitalAvailable = if(enginePreference == \vital, { self[\vitalRuntimeAvailable].value(self) }, { self[\refreshVital].value(self) });
         var cpuClass = \normal;
         if(dexedAvailable, {
             materialPool = materialPool ++ [\dexed, \dexed];
+        });
+        if(vitalAvailable, {
+            materialPool = materialPool ++ [\vital, \vital];
         });
         switch(modifier,
             \percussive, {
@@ -1203,6 +1288,10 @@
                 dexed[\durScale] = self[\exprand].value(self, 0.06, 0.42);
                 dexed[\octaveBias] = [-12, 0, 0, 12].choose;
                 dexed[\patchProfile] = \percussive;
+                vital[\velocity] = self[\rand].value(self, 68, 118).round(1);
+                vital[\durScale] = self[\exprand].value(self, 0.06, 0.38);
+                vital[\octaveBias] = [-12, 0, 0, 12].choose;
+                vital[\patchProfile] = \percussive;
                 if(fx == \clouds, {
                     clouds[\dens] = self[\rand].value(self, 0.45, 0.95);
                     clouds[\size] = self[\rand].value(self, 0.08, 0.35);
@@ -1229,6 +1318,9 @@
                 molly[\envAttack] = self[\exprand].value(self, 0.12, 1.8);
                 molly[\envSustain] = self[\rand].value(self, 0.55, 0.95);
                 molly[\envRelease] = self[\exprand].value(self, 1.2, 8.0);
+                vital[\durScale] = self[\exprand].value(self, 2.0, 7.0);
+                vital[\octaveBias] = [-24, -12, -12, 0].choose;
+                vital[\patchProfile] = \drone;
                 if(fx == \clouds, {
                     clouds[\size] = self[\rand].value(self, 0.55, 0.98);
                     clouds[\dens] = self[\rand].value(self, 0.08, 0.38);
@@ -1254,6 +1346,9 @@
                 molly[\subOscLevel] = self[\rand].value(self, 0.15, 0.65);
                 passersby[\decay] = self[\exprand].value(self, 0.5, 4.5);
                 passersby[\reverbMix] = self[\rand].value(self, 0.18, 0.55);
+                vital[\durScale] = self[\exprand].value(self, 0.8, 3.6);
+                vital[\octaveBias] = [-12, 0, 0, 12].choose;
+                vital[\patchProfile] = \harmonic;
                 if(fx == \clouds, {
                     clouds[\spread] = self[\rand].value(self, 0.55, 0.98);
                     clouds[\rvb] = self[\rand].value(self, 0.22, 0.62);
@@ -1279,6 +1374,10 @@
                 molly[\noiseLevel] = self[\exprand].value(self, 0.04, 0.28);
                 molly[\freqModLfo] = self[\exprand].value(self, 0.01, 0.12);
                 molly[\ampMod] = self[\rand].value(self, 0.08, 0.42);
+                vital[\velocity] = self[\rand].value(self, 45, 120).round(1);
+                vital[\durScale] = self[\exprand].value(self, 0.08, 1.6);
+                vital[\octaveBias] = [-24, -12, 0, 12, 24].choose;
+                vital[\patchProfile] = \chaos;
                 if(fx == \clouds, {
                     clouds[\dens] = self[\rand].value(self, 0.35, 0.92);
                     clouds[\fb] = self[\rand].value(self, 0.12, 0.55);
@@ -1294,7 +1393,11 @@
             if(enginePreference == \dexed and: { dexedAvailable.not }, {
                 "EAP future source engine dexed unavailable; using modifier material pool".postln;
             }, {
-                materialPool = [enginePreference];
+                if(enginePreference == \vital and: { vitalAvailable.not }, {
+                    "EAP future source engine vital unavailable; using modifier material pool".postln;
+                }, {
+                    materialPool = [enginePreference];
+                });
             });
         });
         materials = Array.fill(materialCount, { materialPool.choose });
@@ -1306,6 +1409,15 @@
             });
         });
         if(enginePreference != \dexed and: { materials.select({ |source| source != \dexed }).isEmpty }, {
+            materials[0] = switch(modifier,
+                \percussive, { [\fold, \plaits, \passersby].choose },
+                \chaos, { [\fold, \passersby, \plaits].choose },
+                \drone, { [\rings, \passersby, \molly].choose },
+                \harmonic, { [\rings, \plaits, \molly].choose },
+                { [\plaits, \rings, \fold, \passersby].choose }
+            );
+        });
+        if(enginePreference != \vital and: { materials.select({ |source| source != \vital }).isEmpty }, {
             materials[0] = switch(modifier,
                 \percussive, { [\fold, \plaits, \passersby].choose },
                 \chaos, { [\fold, \passersby, \plaits].choose },
@@ -1326,6 +1438,14 @@
         if(materials.includes(\dexed), {
             dexedPatchInfo = self[\loadDexedPatch].value(self, dexedPatchSeed, index - 1, dexed[\patchProfile]);
             dexed[\patchInfo] = dexedPatchInfo;
+        });
+        if(materials.includes(\vital), {
+            vitalPatchInfo = self[\loadVitalPatch].value(self, vitalPatchSeed, index, vital[\patchProfile]);
+            vital[\patchInfo] = vitalPatchInfo;
+        });
+        if(materials.includes(\vital) and: { fx == \clouds }, {
+            "EAP Vital scene using pedalboard instead of Clouds for Pi CPU headroom".postln;
+            fx = \pedalboard;
         });
         (
             index: index,
@@ -1358,6 +1478,7 @@
             molly: molly,
             passersby: passersby,
             dexed: dexed,
+            vital: vital,
             clouds: clouds,
             state: \blank
         )
@@ -1643,6 +1764,24 @@
                     if(isPerc, { noteDur.clip(0.04, 0.65) }, { noteDur.clip(0.08, 8.0) })
                 );
             };
+            if(source == \vital) {
+                var v = lane[\vital];
+                var noteDur = lane[\gap] * (v[\durScale] ? 1.0) * decayScale;
+                if(self[\externalInputSynth].notNil, {
+                    self[\externalInputSynth].set(\amp, 0.66, \fadeTime, 0.03);
+                    SystemClock.sched(noteDur.clip(0.06, 10.0) + 0.25, {
+                        if(self[\externalInputSynth].notNil, {
+                            self[\externalInputSynth].set(\amp, 0.0, \fadeTime, 0.12);
+                        });
+                        nil;
+                    });
+                });
+                self[\sendVitalNote].value(self,
+                    (pitch + (v[\octaveBias] ? 0)).clip(lane[\register][0], lane[\register][1]),
+                    ((v[\velocity] ? 82) * accent).clip(24, 126),
+                    if(isPerc, { noteDur.clip(0.04, 0.55) }, { noteDur.clip(0.08, 10.0) })
+                );
+            };
         });
     };
 
@@ -1889,7 +2028,7 @@
                 ringsModel: lane[\ringsModel], rings: if(lane[\rings].notNil, { lane[\rings].copy }, { nil }),
                 soundModifier: lane[\soundModifier], lastDegree: lane[\lastDegree],
                 molly: lane[\molly].copy, passersby: lane[\passersby].copy,
-                dexed: lane[\dexed].copy,
+                dexed: lane[\dexed].copy, vital: lane[\vital].copy,
                 clouds: lane[\clouds].copy, state: lane[\state]
             );
         });
@@ -1899,6 +2038,7 @@
         var m = lane[\molly];
         var p = lane[\passersby];
         var d = lane[\dexed];
+        var v = lane[\vital];
         lane[\index] = index + 1;
         lane[\slot] = index + 1;
         lane[\group] = nil;
@@ -1974,6 +2114,14 @@
             d[\octaveBias] = if([-12, 0, 12].includes(d[\octaveBias]), { d[\octaveBias] }, { 0 });
             d[\patchSeed] = d[\patchSeed] ? 0;
             d[\patchInfo] = d[\patchInfo] ? "";
+        };
+        if(v.notNil) {
+            v[\velocity] = (v[\velocity] ? 82).clip(24, 126);
+            v[\durScale] = (v[\durScale] ? 1.0).clip(0.04, 10.0);
+            v[\octaveBias] = if([-24, -12, 0, 12, 24].includes(v[\octaveBias]), { v[\octaveBias] }, { 0 });
+            v[\patchSeed] = v[\patchSeed] ? 0;
+            v[\patchProfile] = v[\patchProfile] ? \default;
+            v[\patchInfo] = v[\patchInfo] ? "";
         };
         lane;
     };

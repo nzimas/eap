@@ -72,7 +72,7 @@ RGB_REVERB_SEND_SELECTED = (0, 68, 126)
 RGB_REVERB_SEND_VALUE = (0, 28, 74)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
-ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6]
+ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6, 7]
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -647,7 +647,9 @@ def restore_session_snapshot(
                     7
                     if target is tuning_values and index == 0
                     else 6
-                    if target is tuning_values and index in (1, 2)
+                    if target is tuning_values and index == 1
+                    else len(ENGINE_CODES) - 1
+                    if target is tuning_values and index == 2
                     else 127
                 )
                 target[index] = max(0, min(value, limit))
