@@ -11,6 +11,11 @@ plugin_uri="${EAP_VITAL_LV2_URI:-urn:distrho:vitalium}"
 mkdir -p "$state_dir"
 touch "$controls_file"
 
+if [[ "${EAP_ENABLE_VITAL:-0}" != "1" ]]; then
+    echo "Vitalium realtime engine disabled; set EAP_ENABLE_VITAL=1 to launch it."
+    exit 0
+fi
+
 if ! command -v jalv >/dev/null 2>&1; then
     echo "jalv is required to host the installed realtime Vitalium LV2 plugin." >&2
     exit 2

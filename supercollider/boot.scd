@@ -5,10 +5,10 @@
 
 s = Server.default;
 s.options.numInputBusChannels = 4;
-s.options.numOutputBusChannels = 2;
+s.options.numOutputBusChannels = 4;
 s.options.sampleRate = 48000;
-s.options.blockSize = 256;
-s.options.hardwareBufferSize = 256;
+s.options.blockSize = 512;
+s.options.hardwareBufferSize = 1024;
 s.options.memSize = 262144;
 s.options.numWireBufs = 256;
 s.options.maxNodes = 8192;
@@ -29,9 +29,28 @@ s.waitForBoot({
             [
                 "jack_disconnect SuperCollider:out_1 system:playback_1",
                 "jack_disconnect SuperCollider:out_1 system:playback_2",
+                "jack_disconnect SuperCollider:out_1 SuperCollider:in_1",
+                "jack_disconnect SuperCollider:out_1 SuperCollider:in_2",
+                "jack_disconnect SuperCollider:out_1 SuperCollider:in_3",
+                "jack_disconnect SuperCollider:out_1 SuperCollider:in_4",
                 "jack_disconnect SuperCollider:out_2 system:playback_1",
                 "jack_disconnect SuperCollider:out_2 system:playback_2",
+                "jack_disconnect SuperCollider:out_2 SuperCollider:in_1",
                 "jack_disconnect SuperCollider:out_2 SuperCollider:in_2",
+                "jack_disconnect SuperCollider:out_2 SuperCollider:in_3",
+                "jack_disconnect SuperCollider:out_2 SuperCollider:in_4",
+                "jack_disconnect SuperCollider:out_3 system:playback_1",
+                "jack_disconnect SuperCollider:out_3 system:playback_2",
+                "jack_disconnect SuperCollider:out_3 SuperCollider:in_1",
+                "jack_disconnect SuperCollider:out_3 SuperCollider:in_2",
+                "jack_disconnect SuperCollider:out_3 SuperCollider:in_3",
+                "jack_disconnect SuperCollider:out_3 SuperCollider:in_4",
+                "jack_disconnect SuperCollider:out_4 system:playback_1",
+                "jack_disconnect SuperCollider:out_4 system:playback_2",
+                "jack_disconnect SuperCollider:out_4 SuperCollider:in_1",
+                "jack_disconnect SuperCollider:out_4 SuperCollider:in_2",
+                "jack_disconnect SuperCollider:out_4 SuperCollider:in_3",
+                "jack_disconnect SuperCollider:out_4 SuperCollider:in_4",
                 "jack_connect SuperCollider:out_1 system:playback_1",
                 "jack_connect SuperCollider:out_2 system:playback_2"
             ].do({ |cmd| cmd.unixCmdGetStdOut; });
@@ -115,6 +134,24 @@ s.waitForBoot({
         var value = ((msg[2] ? 64).asInteger / 127).clip(0, 1);
         ~eapScenes[\setSlotReverbSend].value(~eapScenes, slot, value);
     }, '/eap/slot/reverb');
+
+    OSCdef(\eapSlotTranspose, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var semitones = (msg[2] ? 0).asInteger.clip(-36, 36);
+        ~eapScenes[\setSlotTranspose].value(~eapScenes, slot, semitones);
+    }, '/eap/slot/transpose');
+
+    OSCdef(\eapGridFx, { |msg|
+        var index = (msg[1] ? 1).asInteger.clip(1, 30);
+        var enabled = (msg[2] ? 0).asInteger.clip(0, 1);
+        ~eapScenes[\setGridFx].value(~eapScenes, index, enabled);
+    }, '/eap/gridfx');
+
+    OSCdef(\eapGridFxScene, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var enabled = (msg[2] ? 0).asInteger.clip(0, 1);
+        ~eapScenes[\setGridFxScene].value(~eapScenes, slot, enabled);
+    }, '/eap/gridfx/scene');
 
     OSCdef(\eapSession, { |msg|
         var slot = (msg[1] ? 1).asInteger.clip(1, 64);

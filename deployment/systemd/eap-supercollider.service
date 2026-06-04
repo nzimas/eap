@@ -11,7 +11,7 @@ WorkingDirectory=/opt/electroacoustic-playground
 Environment=JACK_NO_AUDIO_RESERVATION=1
 Environment=QT_QPA_PLATFORM=offscreen
 Environment=SC_JACK_DEFAULT_INPUTS=4
-Environment=SC_JACK_DEFAULT_OUTPUTS=2
+Environment=SC_JACK_DEFAULT_OUTPUTS=4
 LimitRTPRIO=95
 LimitMEMLOCK=infinity
 ExecStart=/usr/bin/sclang -D /opt/electroacoustic-playground/supercollider/boot.scd

@@ -48,6 +48,12 @@ Use `eap-install-vitalium` on the Pi to build and install Vitalium LV2 plus the 
 
 On the Scales / Root Note page, engine row 4 now maps left to right as: Any, Plaits, Rings, Passersby, Molly, Fold, Dexed, Vital/Vitalium.
 
+## Airwindows Grid FX
+
+The CC 93 button toggles a global Airwindows grid FX page. Row 1 mirrors the scene slots: active scenes are lit and selected scenes glow brighter, allowing the Airwindows chain to target specific scenes. The usable effects are compacted left-to-right from row 2, currently covering 30 selected Airwindows effects; up to three can be active at once. Activating a fourth effect drops the oldest active effect, and each activation randomizes that plugin's parameters.
+
+Use `eap-install-airwindows` on the Pi to build the exact Airwindows wrappers and persistent JACK host. The grid FX run as an external insert only while active: SuperCollider sends the scene mix out on outputs 3/4, the active Airwindows chain returns on inputs 1/2, and the processed signal enters EAP immediately before the master reverb/dynamics stage.
+
 ## Sound-Type Modifiers
 
 Hold one of the four Up buttons while toggling or long-pressing a bottom-row scene pad to bias generation and regeneration:

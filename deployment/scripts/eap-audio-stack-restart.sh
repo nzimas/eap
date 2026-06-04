@@ -7,8 +7,13 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 systemctl stop eap-launchpad.service eap-console-status.service 2>/dev/null || true
-systemctl stop eap-dexed-connect.service eap-sc-connect.service 2>/dev/null || true
-systemctl stop eap-dexed.service eap-supercollider.service 2>/dev/null || true
+systemctl stop eap-vital-connect.service eap-dexed-connect.service eap-sc-connect.service 2>/dev/null || true
+systemctl stop eap-vital.service eap-dexed.service eap-supercollider.service 2>/dev/null || true
+/usr/local/bin/eap-airwindows-grid-fx --stop 2>/dev/null || true
+pkill -x eap-airwindows-host 2>/dev/null || true
+pkill -x jalv 2>/dev/null || true
+pkill -f '[v]italium' 2>/dev/null || true
+pkill -f '[e]ap-start-vital' 2>/dev/null || true
 systemctl stop eap-jack.service 2>/dev/null || true
 
 sleep 1

@@ -4,6 +4,11 @@ set -eu
 tries="${1:-40}"
 sleep_s="${2:-0.5}"
 
+if [ "${EAP_ENABLE_DEXED:-0}" != "1" ]; then
+    echo "Dexed JACK wiring disabled; set EAP_ENABLE_DEXED=1 to connect it."
+    exit 0
+fi
+
 if ! command -v jack_lsp >/dev/null 2>&1 || ! command -v jack_connect >/dev/null 2>&1; then
     echo "jack_lsp and jack_connect are required for Dexed JACK wiring" >&2
     exit 1

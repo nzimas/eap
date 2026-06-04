@@ -21,6 +21,7 @@ REVERB_CC = 91
 TUNING_CC = 92
 SESSION_CC = 98
 MASTER_CC = 89
+GRID_FX_CC = 93
 PERCUSSIVE_CC = 19
 DRONE_CC = 29
 HARMONIC_CC = 39
@@ -70,9 +71,26 @@ RGB_TIMBRE_SELECTED = (0, 112, 54)
 RGB_TIMBRE_VALUE = (0, 58, 28)
 RGB_REVERB_SEND_SELECTED = (0, 68, 126)
 RGB_REVERB_SEND_VALUE = (0, 28, 74)
+RGB_TRANSPOSE_SELECTED = (126, 64, 0)
+RGB_TRANSPOSE_VALUE = (74, 28, 0)
+RGB_TRANSPOSE_CENTER = (32, 24, 18)
+RGB_GRID_FX_IDLE = (16, 10, 4)
+RGB_GRID_FX_PAGE = (126, 80, 0)
+RGB_GRID_FX_DIM = (10, 6, 2)
+RGB_GRID_FX_AVAILABLE = (58, 28, 0)
+RGB_GRID_FX_ACTIVE = (126, 92, 12)
+RGB_GRID_FX_SCENE_ACTIVE = (0, 62, 14)
+RGB_GRID_FX_SCENE_SELECTED = (0, 126, 42)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
 ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6, 7]
+AIRWINDOWS_FX = [
+    "TapeDelay2", "PitchDelay", "Doublelay", "SampleDelay", "Melt", "ADT", "StarChild2", "TakeCare",
+    "RingModulator", "Dubly3", "GalacticVibe", "Pafnuty2", "PitchNasty", "GuitarConditioner", "GlitchShifter", "Gringer",
+    "Nikola", "HipCrush", "DeRez3", "Pockey2", "CrunchyGrooveWear", "BitGlitter", "TapeBias", "Vibrato",
+    "Deckwrecka", "DeNoise", "Texturize", "VoiceOfTheStarship", "ElectroHat", "Silhouette",
+]
+MAX_GRID_FX_ACTIVE = 3
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -93,6 +111,7 @@ class Pad:
     density: int = 100
     timbre_motion: int = 0
     reverb_send: int = 64
+    transpose: int = 0
 
 
 @dataclass
@@ -144,6 +163,27 @@ def send_slot_timbre_osc(slot: int, value: int) -> None:
 def send_slot_reverb_send_osc(slot: int, value: int) -> None:
     packet = osc_string("/eap/slot/reverb") + osc_string(",ii")
     packet += struct.pack(">ii", int(slot), int(value))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_slot_transpose_osc(slot: int, semitones: int) -> None:
+    packet = osc_string("/eap/slot/transpose") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), int(semitones))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_grid_fx_osc(index: int, enabled: bool) -> None:
+    packet = osc_string("/eap/gridfx") + osc_string(",ii")
+    packet += struct.pack(">ii", int(index), 1 if enabled else 0)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_grid_fx_scene_osc(slot: int, enabled: bool) -> None:
+    packet = osc_string("/eap/gridfx/scene") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), 1 if enabled else 0)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
 
@@ -359,6 +399,7 @@ def paint_scene_page(pads: dict[int, Pad], held_modifier_cc: int | None = None) 
     for pad in pads.values():
         paint(pad)
     paint_modifier_leds(held_modifier_cc)
+    send_led(GRID_FX_CC, RGB_GRID_FX_IDLE)
 
 
 def col_for_value(value: int) -> int:
@@ -369,6 +410,21 @@ def value_for_col(col: int) -> int:
     return round(((col - 1) / 7) * 127)
 
 
+def transpose_for_col(col: int) -> int:
+    if col <= 4:
+        return (col - 4) * 12
+    return (col - 5) * 12
+
+
+def col_for_transpose(semitones: int) -> int:
+    steps = max(-3, min(round(semitones / 12), 3))
+    if steps < 0:
+        return 4 + steps
+    if steps > 0:
+        return 5 + steps
+    return 5
+
+
 def paint_performance_page(pads: dict[int, Pad], selected_slot: int) -> None:
     selected_note = BOTTOM_ROW_NOTES[selected_slot - 1]
     pad = pads[selected_note]
@@ -377,6 +433,7 @@ def paint_performance_page(pads: dict[int, Pad], selected_slot: int) -> None:
     density_col = col_for_value(pad.density)
     timbre_col = col_for_value(pad.timbre_motion)
     reverb_send_col = col_for_value(pad.reverb_send)
+    transpose_col = col_for_transpose(pad.transpose)
     for note in MATRIX_NOTES:
         position = matrix_position(note)
         if position is None:
@@ -429,6 +486,18 @@ def paint_performance_page(pads: dict[int, Pad], selected_slot: int) -> None:
             else:
                 colour = RGB_PERFORMANCE_DIM
             send_led(note, colour)
+        elif row == 7:
+            if pad.transpose == 0 and col in (4, 5):
+                colour = RGB_TRANSPOSE_SELECTED
+            elif col == transpose_col:
+                colour = RGB_TRANSPOSE_SELECTED
+            elif col in (4, 5):
+                colour = RGB_TRANSPOSE_CENTER
+            elif (transpose_col < 5 and transpose_col <= col <= 4) or (transpose_col > 5 and 5 <= col <= transpose_col):
+                colour = RGB_TRANSPOSE_VALUE
+            else:
+                colour = RGB_PERFORMANCE_DIM
+            send_led(note, colour)
         else:
             send_led(note, RGB_PERFORMANCE_DIM)
 
@@ -466,7 +535,84 @@ def handle_performance_note(note: int, pads: dict[int, Pad], selected_slot: int)
         send_slot_reverb_send_osc(selected_slot, value)
         paint_performance_page(pads, selected_slot)
         return True
+    if row == 7:
+        pad.transpose = transpose_for_col(col)
+        send_slot_transpose_osc(selected_slot, pad.transpose)
+        paint_performance_page(pads, selected_slot)
+        return True
     return False
+
+
+def grid_fx_index_for_note(note: int) -> int | None:
+    position = matrix_position(note)
+    if position is None:
+        return None
+    row, col = position
+    if 2 <= row <= 7:
+        index = ((row - 2) * 8) + col
+        if 1 <= index <= len(AIRWINDOWS_FX):
+            return index
+    return None
+
+
+def paint_grid_fx_page(active_fx: list[int], pads: dict[int, Pad], selected_scenes: set[int]) -> None:
+    active = set(active_fx)
+    for note in MATRIX_NOTES:
+        position = matrix_position(note)
+        if position is None:
+            continue
+        row, col = position
+        if row == 1:
+            pad = pads.get(note)
+            if pad is not None and pad.state == STATE_ACTIVE:
+                slot = slot_for_note(note)
+                colour = RGB_GRID_FX_SCENE_SELECTED if slot in selected_scenes else RGB_GRID_FX_SCENE_ACTIVE
+            elif pad is not None and pad.state == STATE_MUTED:
+                colour = RGB_MUTED
+            else:
+                colour = RGB_GRID_FX_DIM
+            send_led(note, colour)
+            continue
+        index = grid_fx_index_for_note(note)
+        if index is None:
+            send_led(note, RGB_GRID_FX_DIM)
+        elif index in active:
+            send_led(note, RGB_GRID_FX_ACTIVE)
+        else:
+            send_led(note, RGB_GRID_FX_AVAILABLE)
+    send_led(GRID_FX_CC, RGB_GRID_FX_PAGE)
+
+
+def handle_grid_fx_note(note: int, active_fx: list[int], pads: dict[int, Pad], selected_scenes: set[int]) -> bool:
+    position = matrix_position(note)
+    if position is not None and position[0] == 1:
+        pad = pads.get(note)
+        if pad is None or pad.state != STATE_ACTIVE:
+            return False
+        slot = slot_for_note(note)
+        if slot in selected_scenes:
+            selected_scenes.remove(slot)
+            send_grid_fx_scene_osc(slot, False)
+        else:
+            selected_scenes.add(slot)
+            send_grid_fx_scene_osc(slot, True)
+        paint_grid_fx_page(active_fx, pads, selected_scenes)
+        return True
+
+    index = grid_fx_index_for_note(note)
+    if index is None:
+        return False
+    if index in active_fx:
+        active_fx.remove(index)
+        send_grid_fx_osc(index, False)
+    else:
+        while len(active_fx) >= MAX_GRID_FX_ACTIVE:
+            removed = active_fx.pop(0)
+            send_grid_fx_osc(removed, False)
+        active_fx.append(index)
+        send_grid_fx_osc(index, True)
+    paint_grid_fx_page(active_fx, pads, selected_scenes)
+    return True
 
 
 def paint_reverb_page(values: list[int]) -> None:
@@ -600,6 +746,7 @@ def session_snapshot(
         "scene_density": [pads[note].density for note in BOTTOM_ROW_NOTES],
         "scene_timbre_motion": [pads[note].timbre_motion for note in BOTTOM_ROW_NOTES],
         "scene_reverb_send": [pads[note].reverb_send for note in BOTTOM_ROW_NOTES],
+        "scene_transpose": [pads[note].transpose for note in BOTTOM_ROW_NOTES],
         "reverb": list(reverb_values),
         "master": list(master_values),
         "tuning": list(tuning_values),
@@ -636,6 +783,10 @@ def restore_session_snapshot(
         if isinstance(value, int):
             pads[note].reverb_send = max(0, min(value, 127))
             send_slot_reverb_send_osc(slot_for_note(note), pads[note].reverb_send)
+    for note, value in zip(BOTTOM_ROW_NOTES, data.get("scene_transpose", [])):
+        if isinstance(value, int):
+            pads[note].transpose = max(-36, min(value, 36))
+            send_slot_transpose_osc(slot_for_note(note), pads[note].transpose)
     for target, source in (
         (reverb_values, data.get("reverb", [])),
         (master_values, data.get("master", [])),
@@ -726,6 +877,8 @@ def main() -> int:
     performance_slot: int | None = None
     performance_scene_note: int | None = None
     performance_interacted = False
+    grid_fx_active: list[int] = []
+    grid_fx_scenes: set[int] = set()
     paint_scene_page(pads, held_modifier_cc)
 
     while True:
@@ -811,6 +964,16 @@ def main() -> int:
                     elif value == 0 and mode != "scene":
                         mode = "scene"
                         paint_scene_page(pads, held_modifier_cc)
+                elif controller == GRID_FX_CC:
+                    if value > 0:
+                        if mode == "gridfx":
+                            mode = "scene"
+                            paint_scene_page(pads, held_modifier_cc)
+                        else:
+                            mode = "gridfx"
+                            performance_slot = None
+                            performance_scene_note = None
+                            paint_grid_fx_page(grid_fx_active, pads, grid_fx_scenes)
                 continue
 
             note = data
@@ -861,6 +1024,11 @@ def main() -> int:
                         master_values,
                         tuning_values,
                     )
+                continue
+
+            if mode == "gridfx":
+                if kind == "on":
+                    handle_grid_fx_note(note, grid_fx_active, pads, grid_fx_scenes)
                 continue
 
             pad = pads.get(note)

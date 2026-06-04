@@ -10,8 +10,14 @@
     ~group = nil;
     ~masterGroup = nil;
     ~masterBus = nil;
+    ~gridFxBus = nil;
     ~reverbBus = nil;
     ~masterSynth = nil;
+    ~gridFxSendSynth = nil;
+    ~gridFxActive = false;
+    ~gridFxScenes = nil;
+    ~gridFxQueue = List.new;
+    ~gridFxProcessing = false;
     ~externalInputSynth = nil;
     ~reverbValues = nil;
     ~masterValues = nil;
@@ -26,6 +32,8 @@
     ~lanes = List.new;
     ~slots = nil;
     ~cloudLaneIndex = nil;
+    ~adaptiveJournal = List.new;
+    ~adaptiveSerial = 0;
 
     ~scales = [
         (0..11),
@@ -69,6 +77,35 @@
     ~rand = { |self, lo = 0.0, hi = 1.0| rrand(lo.asFloat, hi.asFloat) };
     ~exprand = { |self, lo = 0.001, hi = 1.0| exprand(lo.asFloat, hi.asFloat) };
 
+    ~countInto = { |self, counts, key, amount = 1|
+        if(key.notNil, {
+            counts[key] = (counts[key] ? 0) + amount;
+        });
+        counts;
+    };
+
+    ~keysWithCountAtLeast = { |self, counts, threshold = 1|
+        var keys = List.new;
+        counts.keysValuesDo({ |key, value|
+            if(value >= threshold, { keys.add(key); });
+        });
+        keys.asArray;
+    };
+
+    ~registerBandFor = { |self, register|
+        var center = ((register ? [36, 72])[0] + (register ? [36, 72])[1]) / 2;
+        if(center < 48, { \low }, { if(center < 66, { \mid }, { \high }) });
+    };
+
+    ~leastUsedRegisterBand = { |self, counts|
+        var low = counts[\low] ? 0;
+        var mid = counts[\mid] ? 0;
+        var high = counts[\high] ? 0;
+        if(low <= mid and: { low <= high }, { \low }, {
+            if(mid <= high, { \mid }, { \high });
+        });
+    };
+
     ~choosePitch = { |self, lane, stepOffset = 0|
         var reg = lane[\register];
         var scale = self[\scales].wrapAt(self[\scaleIndex]);
@@ -77,6 +114,7 @@
         var semitone;
         var center = (reg[0] + reg[1]) / 2;
         var octave = (center / 12).floor;
+        var transpose = (lane[\transpose] ? 0).asInteger.clip(-36, 36);
         var midi;
         if(lane[\lastDegree].isNil, {
             degreeIdx = [0, 0, 0, 0, 2, 4].choose.clip(0, scale.size - 1);
@@ -94,7 +132,7 @@
             octave = octave - 1;
             midi = (octave * 12) + root + semitone;
         });
-        midi.clip(reg[0], reg[1]);
+        (midi + transpose).clip(0, 127);
     };
 
     ~scaleStepsForLane = { |self, lane|
@@ -609,13 +647,13 @@
                 accent: (event[\accent] ? 1.0).asFloat.clip(0.0, 2.2),
                 scaleStep: (event[\scaleStep] ? 0).asInteger,
                 sourceCount: if(mod == \percussive, { 1 }, {
-                    if(loadN >= 4, { 1 }, { voices.clip(1, lane[\materials].size.max(1)) });
+                    if(loadN >= 2, { 1 }, { voices.clip(1, lane[\materials].size.max(1)) });
                 }),
                 panBias: (event[\panBias] ? 0.0).asFloat.clip(-0.55, 0.55),
                 decayScale: if(mod == \percussive, {
                     (event[\decayScale] ? 0.5).asFloat.clip(0.18, 0.58);
                 }, {
-                    (event[\decayScale] ? 1.0).asFloat.clip(0.25, 2.4);
+                    (event[\decayScale] ? 1.0).asFloat.clip(0.25, if(loadN >= 3, { 1.15 }, { 1.8 }));
                 }),
                 hits: if(loadN >= 3, { 1 }, { (event[\hits] ? 1).asInteger.clip(1, 4) })
             );
@@ -655,7 +693,7 @@
             \drone, { 0.12 },
             { 0.09 }
         );
-        (base + (load * 0.02)).max(0.05);
+        (base + (load * 0.04)).max(0.05);
     };
 
     ~maxDeltaForLane = { |self, lane|
@@ -683,9 +721,11 @@
     ~laneTriggerBudget = { |self, lane|
         var idx = (self[\activeCount].value(self) - 1).clip(0, 5);
         switch(lane[\soundModifier],
-            \percussive, { [14, 11, 8, 6, 5, 4][idx] },
-            \chaos, { [12, 10, 7, 5, 4, 3][idx] },
-            { [10, 8, 6, 5, 4, 3][idx] }
+            \percussive, { [10, 7, 4, 3, 2, 1][idx] },
+            \drone, { [4, 3, 2, 1, 1, 1][idx] },
+            \harmonic, { [5, 4, 3, 2, 1, 1][idx] },
+            \chaos, { [6, 4, 3, 2, 1, 1][idx] },
+            { [5, 4, 3, 2, 1, 1][idx] }
         );
     };
 
@@ -702,6 +742,15 @@
         });
     };
 
+    ~sustainLoadScale = { |self|
+        var load = self[\activeCount].value(self);
+        if(load >= 4, { 0.38 }, {
+            if(load >= 3, { 0.52 }, {
+                if(load >= 2, { 0.72 }, { 1.0 });
+            });
+        });
+    };
+
     ~hasActiveCloud = { |self|
         self[\slots].any({ |lane| lane.notNil and: { (lane[\state] == \active) and: { lane[\fx] == \clouds } } });
     };
@@ -715,10 +764,12 @@
             wet = 0.24, room = 0.55, damp = 0.45, decay = 3.2,
             lowCut = 120, highCut = 9500, modDepth = 0.08, bright = 0.75,
             masterVol = 0.82, overdrive = 0.0, bitDepth = 1.0, saturation = 0.12,
-            compProfile = 0|
-            var dry, send, pre, verb, sig, driven, saturated, folded, grimy, sat, srFreq, levels, degraded;
+            compProfile = 0, gridActive = 0, gridInGain = 1|
+            var dryInternal, dryExternal, dry, send, pre, verb, sig, driven, saturated, folded, grimy, sat, srFreq, levels, degraded;
             var profile, threshold, slopeAbove, clampTime, relaxTime, makeup;
-            dry = LeakDC.ar(In.ar(in, 2));
+            dryInternal = LeakDC.ar(In.ar(in, 2));
+            dryExternal = LeakDC.ar(SoundIn.ar([0, 1])) * gridInGain.clip(0, 2);
+            dry = dryInternal + (dryExternal * Lag.kr(gridActive.clip(0, 1), 0.08));
             send = LeakDC.ar(In.ar(reverbIn, 2));
             pre = HPF.ar(LPF.ar(send, highCut.clip(1200, 18000)), lowCut.clip(20, 1200));
             verb = JPverb.ar(pre, decay.clip(0.7, 12), damp.clip(0.05, 0.95),
@@ -748,6 +799,11 @@
             sig = Compander.ar(sig, sig, threshold, 1, slopeAbove, clampTime, relaxTime) * makeup;
             sig = Limiter.ar(sig * masterVol.clip(0, 1) * amp, 0.98, 0.01);
             Out.ar(out, sig);
+        }).add;
+
+        SynthDef(\eapGridFxSend, { |in = 0, out = 2, amp = 0, fadeTime = 0.08|
+            var sig = LeakDC.ar(In.ar(in, 2));
+            Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime).clip(0, 1), 0.95, 0.01));
         }).add;
 
         SynthDef(\eapExternalInput, { |out = 0, amp = 0.0, fadeTime = 0.08|
@@ -906,7 +962,8 @@
             Out.ar(out, Pan2.ar(tanh(signal * amp * 2.1).softclip, pan));
         }).add;
 
-        SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, sendOut = 0, send = 0.5, pit = 0, pos = 0.5,
+        SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, sendOut = 0, gridOut = 0,
+            send = 0.5, gridSend = 0, dryAmp = 1, pit = 0, pos = 0.5,
             size = 0.25, dens = 0.4, tex = 0.5, drywet = 0.55, in_gain = 1,
             spread = 0.5, rvb = 0.2, fb = 0.1, freeze = 0, mode = 0, lofi = 0,
             amp = 0.84, pan = 0, fadeTime = 0.05|
@@ -916,15 +973,18 @@
                 spread, rvb, fb, freeze, mode, lofi, 0);
             sig = Balance2.ar(sig[0], sig[1], Lag.kr(pan, fadeTime).clip(-1, 1), Lag.kr(amp, fadeTime));
             sig = Limiter.ar(LeakDC.ar(sig), 0.9, 0.01);
-            Out.ar(out, sig);
+            Out.ar(out, sig * Lag.kr(dryAmp, fadeTime).clip(0, 1));
+            Out.ar(gridOut, sig * Lag.kr(gridSend, fadeTime).clip(0, 1));
             Out.ar(sendOut, sig * Lag.kr(send, fadeTime).clip(0, 1));
         }).add;
 
-        SynthDef(\eapLaneOut, { |in = 0, out = 0, sendOut = 0, amp = 0.78, pan = 0, send = 0.5, fadeTime = 0.05|
+        SynthDef(\eapLaneOut, { |in = 0, out = 0, sendOut = 0, gridOut = 0,
+            amp = 0.78, pan = 0, send = 0.5, gridSend = 0, dryAmp = 1, fadeTime = 0.05|
             var sig = LeakDC.ar(In.ar(in, 2));
             sig = Balance2.ar(sig[0], sig[1], Lag.kr(pan, fadeTime).clip(-1, 1), Lag.kr(amp, fadeTime));
             sig = Limiter.ar(sig, 0.9, 0.01);
-            Out.ar(out, sig);
+            Out.ar(out, sig * Lag.kr(dryAmp, fadeTime).clip(0, 1));
+            Out.ar(gridOut, sig * Lag.kr(gridSend, fadeTime).clip(0, 1));
             Out.ar(sendOut, sig * Lag.kr(send, fadeTime).clip(0, 1));
         }).add;
 
@@ -962,12 +1022,17 @@
                     ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
                     ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
                     ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
-                    ++ " routine=" ++ lane[\routine].notNil
+                    ++ " transpose=" ++ (lane[\transpose] ? 0)
+                    ++ " routine=" ++ (lane[\state] == \active and: { lane[\routine].notNil })
                     ++ " ticks=" ++ (lane[\tickCount] ? 0)
                     ++ " triggers=" ++ (lane[\triggerCount] ? 0)
+                    ++ " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0)
+                    ++ " adaptiveRegister=" ++ ((lane[\adaptive] ? ())[\registerBand] ? \mid)
                     ++ " materials=" ++ lane[\materials].asString);
             });
         });
+        lines.add("adaptiveJournal=" ++ self[\adaptiveJournal].size
+            ++ " adaptiveSerial=" ++ (self[\adaptiveSerial] ? 0));
         lines.join("\n").postln;
         lines;
     };
@@ -1132,7 +1197,174 @@
         chain;
     };
 
-    ~randomLane = { |self, index, total, modifier = nil|
+    ~adaptiveContextForSlot = { |self, slot, modifier = nil|
+        var materialCounts = IdentityDictionary.new;
+        var activeMaterialCounts = IdentityDictionary.new;
+        var fxCounts = IdentityDictionary.new;
+        var rhythmCounts = IdentityDictionary.new;
+        var registerCounts = IdentityDictionary.new;
+        var modifierCounts = IdentityDictionary.new;
+        var engineCounts = IdentityDictionary.new;
+        var siblings = List.new;
+        var siblingCount;
+        var pulseSum = 0.0;
+        var pulseCount = 0;
+        var gapSum = 0.0;
+        var gapCount = 0;
+        var slotIndex = slot.asInteger.clip(1, self[\maxScenes]) - 1;
+        if(self[\slots].notNil, {
+            self[\slots].do({ |lane, laneIndex|
+                if(lane.notNil and: { laneIndex != slotIndex and: { lane[\state] != \blank } }) {
+                    siblings.add(lane);
+                    (lane[\materials] ? []).do({ |source|
+                        self[\countInto].value(self, materialCounts, source, 2);
+                        self[\countInto].value(self, activeMaterialCounts, source, 1);
+                    });
+                    self[\countInto].value(self, fxCounts, lane[\fx], 2);
+                    self[\countInto].value(self, rhythmCounts, lane[\rhythmProfile], 2);
+                    self[\countInto].value(self, registerCounts, self[\registerBandFor].value(self, lane[\register]), 1);
+                    self[\countInto].value(self, modifierCounts, lane[\soundModifier], 1);
+                    if(lane[\sourceEngine].notNil, {
+                        self[\countInto].value(self, engineCounts, lane[\sourceEngine], 1);
+                    });
+                    if(lane[\pulse].notNil, {
+                        pulseSum = pulseSum + lane[\pulse].asFloat;
+                        pulseCount = pulseCount + 1;
+                    });
+                    if(lane[\gap].notNil, {
+                        gapSum = gapSum + lane[\gap].asFloat;
+                        gapCount = gapCount + 1;
+                    });
+                };
+            });
+        });
+        self[\adaptiveJournal].do({ |entry|
+            if(entry[\slot] != (slotIndex + 1), {
+                (entry[\materials] ? []).do({ |source| self[\countInto].value(self, materialCounts, source, 1); });
+                self[\countInto].value(self, fxCounts, entry[\fx], 1);
+                self[\countInto].value(self, rhythmCounts, entry[\rhythmProfile], 1);
+                self[\countInto].value(self, registerCounts, entry[\registerBand], 1);
+                self[\countInto].value(self, modifierCounts, entry[\modifier], 1);
+                self[\countInto].value(self, engineCounts, entry[\sourceEngine], 1);
+                if(entry[\pulse].notNil, {
+                    pulseSum = pulseSum + entry[\pulse].asFloat;
+                    pulseCount = pulseCount + 1;
+                });
+                if(entry[\gap].notNil, {
+                    gapSum = gapSum + entry[\gap].asFloat;
+                    gapCount = gapCount + 1;
+                });
+            });
+        });
+        siblingCount = siblings.size;
+        (
+            siblingCount: siblingCount,
+            avoidMaterials: self[\keysWithCountAtLeast].value(self, activeMaterialCounts, 1),
+            overusedMaterials: self[\keysWithCountAtLeast].value(self, materialCounts, if(siblingCount >= 3, { 3 }, { 2 })),
+            avoidFx: self[\keysWithCountAtLeast].value(self, fxCounts, if(siblingCount >= 3, { 3 }, { 2 })),
+            avoidRhythms: self[\keysWithCountAtLeast].value(self, rhythmCounts, if(siblingCount >= 3, { 3 }, { 2 })),
+            registerBand: self[\leastUsedRegisterBand].value(self, registerCounts),
+            pulseAnchor: if(pulseCount > 0, { pulseSum / pulseCount }, { nil }),
+            gapAnchor: if(gapCount > 0, { gapSum / gapCount }, { nil }),
+            materialCounts: materialCounts,
+            fxCounts: fxCounts,
+            rhythmCounts: rhythmCounts,
+            registerCounts: registerCounts,
+            modifierCounts: modifierCounts,
+            engineCounts: engineCounts
+        );
+    };
+
+    ~applyAdaptiveBias = { |self, lane, adaptive|
+        var band;
+        if(lane.notNil and: { adaptive.notNil }) {
+            band = adaptive[\registerBand] ? \mid;
+            lane[\adaptive] = (
+                siblingCount: adaptive[\siblingCount] ? 0,
+                avoidMaterials: (adaptive[\avoidMaterials] ? []).copy,
+                overusedMaterials: (adaptive[\overusedMaterials] ? []).copy,
+                avoidRhythms: (adaptive[\avoidRhythms] ? []).copy,
+                avoidFx: (adaptive[\avoidFx] ? []).copy,
+                registerBand: band
+            );
+            lane[\register] = switch(band,
+                \low, { [[24, 48], [28, 55], [31, 58]].choose },
+                \mid, { [[36, 62], [40, 67], [45, 72]].choose },
+                \high, { [[52, 84], [55, 88], [60, 91]].choose },
+                { lane[\register] }
+            );
+            if(adaptive[\pulseAnchor].notNil, {
+                lane[\pulse] = ((lane[\pulse] ? 0.12) * 0.65 + (adaptive[\pulseAnchor].asFloat * 0.35)).clip(0.045, 0.9);
+            });
+            if(adaptive[\gapAnchor].notNil, {
+                lane[\gap] = ((lane[\gap] ? 0.2) * 0.78 + (adaptive[\gapAnchor].asFloat * 0.22)).clip(0.04, 8.0);
+            });
+            if((adaptive[\siblingCount] ? 0) > 0, {
+                lane[\densitySkew] = ((lane[\densitySkew] ? 1.0) * [0.86, 0.94, 1.08, 1.16].choose).clip(0.35, 2.4);
+                if(lane[\molly].notNil, {
+                    lane[\molly][\lfoFreq] = ((lane[\molly][\lfoFreq] ? 0.1) * [0.65, 0.82, 1.28, 1.55].choose).clip(0.01, 3.5);
+                    lane[\molly][\lpFilterCutoff] = ((lane[\molly][\lpFilterCutoff] ? 1200) * [0.72, 0.9, 1.15, 1.38].choose).clip(180, 12000);
+                });
+                if(lane[\passersby].notNil, {
+                    lane[\passersby][\toneTilt] = ((lane[\passersby][\toneTilt] ? 0.5) + [-0.18, -0.09, 0.11, 0.20].choose).clip(0.0, 1.0);
+                    lane[\passersby][\waveFolds] = ((lane[\passersby][\waveFolds] ? 0.6) * [0.72, 0.9, 1.18, 1.42].choose).clip(0.0, 3.4);
+                });
+                if(lane[\rings].notNil, {
+                    lane[\rings][\bright] = ((lane[\rings][\bright] ? 0.5) + [-0.14, -0.06, 0.08, 0.16].choose).clip(0.05, 0.98);
+                    lane[\rings][\pos] = ((lane[\rings][\pos] ? 0.5) + [-0.16, -0.08, 0.10, 0.18].choose).clip(0.02, 0.98);
+                });
+            });
+        };
+        lane;
+    };
+
+    ~adaptiveJournalEntryForLane = { |self, lane, action = \generate|
+        (
+            serial: self[\adaptiveSerial],
+            action: action,
+            slot: lane[\slot] ? lane[\index],
+            modifier: lane[\soundModifier],
+            sourceEngine: lane[\sourceEngine] ? (self[\sourceEnginePreference] ? \any),
+            materials: (lane[\materials] ? []).copy,
+            fx: lane[\fx],
+            rhythmProfile: lane[\rhythmProfile],
+            register: (lane[\register] ? [0, 0]).copy,
+            registerBand: self[\registerBandFor].value(self, lane[\register]),
+            plaitsModels: (lane[\plaitsModels] ? []).copy,
+            ringsModel: lane[\ringsModel],
+            pedalChain: (lane[\pedals] ? []).copy,
+            gap: lane[\gap],
+            pulse: lane[\pulse],
+            swing: lane[\swing],
+            transpose: lane[\transpose] ? 0,
+            densitySkew: lane[\densitySkew],
+            restProb: lane[\restProb],
+            volatility: lane[\volatility],
+            scaleIndex: self[\scaleIndex],
+            rootNote: self[\rootNote],
+            adaptive: lane[\adaptive]
+        );
+    };
+
+    ~recordAdaptiveScene = { |self, lane, action = \generate|
+        var entry;
+        if(lane.notNil, {
+            self[\adaptiveSerial] = (self[\adaptiveSerial] ? 0) + 1;
+            entry = self[\adaptiveJournalEntryForLane].value(self, lane, action);
+            self[\adaptiveJournal].add(entry);
+            while({ self[\adaptiveJournal].size > 64 }, { self[\adaptiveJournal].removeAt(0); });
+            ("EAP adaptive journal #" ++ entry[\serial]
+                ++ " slot=" ++ entry[\slot]
+                ++ " action=" ++ action
+                ++ " materials=" ++ entry[\materials].asString
+                ++ " rhythm=" ++ (entry[\rhythmProfile] ? \unknown)
+                ++ " registerBand=" ++ (entry[\registerBand] ? \mid)
+                ++ " siblings=" ++ ((entry[\adaptive] ? ())[\siblingCount] ? 0)).postln;
+        });
+        entry;
+    };
+
+    ~randomLane = { |self, index, total, modifier = nil, adaptive = nil|
         var enginePreference = self[\sourceEnginePreference];
         var materialPool = [\plaits, \plaits, \rings, \rings, \fold, \passersby, \passersby];
         var maxMaterials = self[\maxSourcesPerScene];
@@ -1227,6 +1459,11 @@
         var dexedPatchSeed = dexed[\patchSeed];
         var dexedPatchInfo = "";
         var dexedAvailable = if(enginePreference == \dexed, { self[\refreshDexed].value(self) }, { false });
+        var sourceEngine = \any;
+        var freshPool;
+        var avoidPool;
+        var alternateRhythms;
+        var lane;
         var vital = (
             velocity: self[\rand].value(self, 50, 100).round(1),
             durScale: self[\exprand].value(self, 0.28, 2.5),
@@ -1389,6 +1626,21 @@
         if(rhythmProfile.isNil, {
             rhythmProfile = self[\rhythmProfilesFor].value(modifier).choose;
         });
+        if(adaptive.notNil and: { enginePreference.isNil }, {
+            avoidPool = ((adaptive[\avoidMaterials] ? []) ++ (adaptive[\overusedMaterials] ? []));
+            freshPool = materialPool.reject({ |source| avoidPool.includes(source) });
+            if(freshPool.notEmpty, {
+                materialPool = freshPool ++ freshPool ++ materialPool;
+            });
+            if((adaptive[\avoidRhythms] ? []).includes(rhythmProfile), {
+                alternateRhythms = self[\rhythmProfilesFor].value(modifier).reject({ |profile|
+                    (adaptive[\avoidRhythms] ? []).includes(profile);
+                });
+                if(alternateRhythms.notEmpty, {
+                    rhythmProfile = alternateRhythms.choose;
+                });
+            });
+        });
         if(enginePreference.notNil, {
             if(enginePreference == \dexed and: { dexedAvailable.not }, {
                 "EAP future source engine dexed unavailable; using modifier material pool".postln;
@@ -1447,11 +1699,22 @@
             "EAP Vital scene using pedalboard instead of Clouds for Pi CPU headroom".postln;
             fx = \pedalboard;
         });
-        (
+        if(adaptive.notNil and: { (adaptive[\avoidFx] ? []).includes(fx) }, {
+            if(fx == \clouds, {
+                fx = \pedalboard;
+            }, {
+                if(total <= 2 and: { self[\hasActiveCloud].value(self).not and: { [\drone, \harmonic].includes(modifier) } }, {
+                    fx = \clouds;
+                });
+            });
+        });
+        sourceEngine = if(enginePreference.notNil and: { materials.includes(enginePreference) }, { enginePreference }, { \any });
+        lane = (
             index: index,
             slot: index,
             total: total,
             soundModifier: modifier,
+            sourceEngine: sourceEngine,
             materials: materials,
             fx: fx,
             scale: self[\scales].wrapAt(self[\scaleIndex]).copy,
@@ -1471,6 +1734,7 @@
             density: 1.0,
             timbreMotion: 0.0,
             reverbSend: 0.5,
+            transpose: 0,
             amp: (0.28 / total.sqrt).clip(0.10, 0.26),
             plaitsModels: plaitsModels,
             ringsModel: rings[\model],
@@ -1481,7 +1745,9 @@
             vital: vital,
             clouds: clouds,
             state: \blank
-        )
+        );
+        self[\applyAdaptiveBias].value(self, lane, adaptive);
+        lane;
     };
 
     ~pedalArgs = { |self, pedalId|
@@ -1512,6 +1778,7 @@
             var c = lane[\clouds];
             var synth = Synth.tail(lane[\group], \eapLaneCloudsFx, [
                 \in, currentIn, \out, self[\masterBus].index, \sendOut, self[\reverbBus].index,
+                \gridOut, self[\gridFxBus].index,
                 \pit, c[\pit], \pos, c[\pos], \size, c[\size], \dens, c[\dens],
                 \tex, c[\tex], \drywet, c[\drywet], \spread, c[\spread],
                 \rvb, c[\rvb], \fb, c[\fb], \mode, c[\mode], \lofi, c[\lofi],
@@ -1538,6 +1805,7 @@
             });
             outSynth = Synth.new(\eapLaneOut, [
                 \in, currentIn, \out, self[\masterBus].index, \sendOut, self[\reverbBus].index,
+                \gridOut, self[\gridFxBus].index,
                 \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0,
                 \send, lane[\reverbSend] ? 0.5
             ], target, \addAfter);
@@ -1547,15 +1815,34 @@
         };
     };
 
+    ~laneGridFxSelected = { |self, lane|
+        var slot = if(lane.notNil, { (lane[\slot] ? 0).asInteger }, { 0 });
+        var scenes = self[\gridFxScenes];
+        slot > 0 and: { scenes.notNil and: { scenes[slot - 1] == true } };
+    };
+
     ~applyLaneOutput = { |self, lane|
         if(lane.notNil and: { lane[\outSynth].notNil }) {
+            var routedToGrid = (self[\gridFxActive] ? false).asBoolean and: {
+                self[\laneGridFxSelected].value(self, lane)
+            };
             lane[\outSynth].set(
                 \amp, (lane[\amp] ? 0.18) * (lane[\level] ? 1.0),
                 \pan, lane[\pan] ? 0.0,
-                \send, lane[\reverbSend] ? 0.5
+                \send, lane[\reverbSend] ? 0.5,
+                \dryAmp, if(routedToGrid, { 0.0 }, { 1.0 }),
+                \gridSend, if(routedToGrid, { 1.0 }, { 0.0 })
             );
         };
         lane;
+    };
+
+    ~applyGridFxRouting = { |self|
+        self[\slots].do({ |lane|
+            if(lane.notNil and: { lane[\state] == \active }) {
+                self[\applyLaneOutput].value(self, lane);
+            };
+        });
     };
 
     ~lanePattern = { |self, lane|
@@ -1652,6 +1939,7 @@
             * self[\exprand].value(self, 0.78, 1.28);
         var modShape = [0, 0, 1, 1, 2, 2, 3, 3][motionStage];
         var modRand = [0.0, 0.0, 0.03, 0.06, 0.10, 0.16, 0.24, 0.34][motionStage];
+        var sustainScale = self[\sustainLoadScale].value(self);
         lane[\triggerCount] = (lane[\triggerCount] ? 0) + 1;
         if(lane[\triggerLog].isNil, {
             lane[\triggerLog] = true;
@@ -1666,7 +1954,7 @@
                     \harm, if(isPerc, { self[\rand].value(self, 0.02, 0.55) }, { self[\rand].value(self, 0.05, 0.95) }),
                     \timbre, if(isPerc, { self[\rand].value(self, 0.22, 0.88) }, { self[\rand].value(self, 0.10, 0.98) }),
                     \morph, if(isPerc, { self[\rand].value(self, 0.05, 0.58) }, { self[\rand].value(self, 0.08, 0.98) }),
-                    \decay, (if(isPerc, { self[\exprand].value(self, 0.018, 0.24) }, { self[\exprand].value(self, 0.08, 5.8) })) * decayScale,
+                    \decay, (if(isPerc, { self[\exprand].value(self, 0.018, 0.24) }, { self[\exprand].value(self, 0.08, 3.2) })) * decayScale * sustainScale,
                     \colour, if(isPerc, { self[\rand].value(self, 0.35, 0.92) }, { self[\rand].value(self, 0.15, 0.90) }),
                     \amp, lane[\amp] * accent,
                     \pan, (self[\rand].value(self, -0.75, 0.75) + panBias).clip(-1, 1),
@@ -1682,8 +1970,8 @@
                     bright: self[\rand].value(self, 0.18, 0.95),
                     damp: self[\rand].value(self, 0.25, 0.96),
                     pos: self[\rand].value(self, 0.10, 0.88),
-                    envDecay: 8.0,
-                    envRelease: 1.2
+                    envDecay: 5.0 * sustainScale,
+                    envRelease: 0.8 * sustainScale
                 );
                 Synth.head(lane[\group], \eapLaneRingsNote, [
                     \out, lane[\sourceBus].index, \pitch, pitch,
@@ -1701,7 +1989,7 @@
                     \fold, if(isPerc, { self[\rand].value(self, 0.45, 2.6) }, { self[\rand].value(self, 0.25, 2.8) }),
                     \fm, if(isPerc, { self[\rand].value(self, 0.08, 0.75) }, { self[\rand].value(self, 0.02, 0.60) }),
                     \cutoff, if(isPerc, { self[\exprand].value(self, 900, 9500) }, { self[\exprand].value(self, 450, 9000) }),
-                    \decay, (if(isPerc, { self[\exprand].value(self, 0.025, 0.22) }, { self[\exprand].value(self, 0.10, 3.8) })) * decayScale,
+                    \decay, (if(isPerc, { self[\exprand].value(self, 0.025, 0.22) }, { self[\exprand].value(self, 0.10, 2.4) })) * decayScale * sustainScale,
                     \amp, lane[\amp] * accent * (if(isPerc, { 0.88 }, { 0.75 })),
                     \pan, (self[\rand].value(self, -0.70, 0.70) + panBias).clip(-1, 1),
                     \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
@@ -1722,8 +2010,8 @@
                     \lpFilterModEnv, (m[\lpFilterModEnv] + (modDepth * 0.55)).clip(0, 1),
                     \lpFilterTracking, m[\lpFilterTracking], \lfoFreq, modRate,
                     \lfoWaveShape, modShape.clip(0, 4), \envAttack, m[\envAttack],
-                    \envDecay, m[\envDecay], \envSustain, m[\envSustain],
-                    \envRelease, m[\envRelease], \ringModFreq, m[\ringModFreq],
+                    \envDecay, m[\envDecay] * sustainScale, \envSustain, (m[\envSustain] * sustainScale).clip(0, 0.78),
+                    \envRelease, m[\envRelease] * sustainScale, \ringModFreq, m[\ringModFreq],
                     \ringModMix, (m[\ringModMix] + (modRand * 0.22)).clip(0, 1),
                     \ampMod, (m[\ampMod] + (modDepth * 0.45)).clip(0, 0.9),
                     \amp, lane[\amp] * accent * 0.85,
@@ -1737,7 +2025,7 @@
                     \waveShape, p[\waveShape], \waveFolds, p[\waveFolds],
                     \fm1Ratio, p[\fm1Ratio], \fm2Ratio, p[\fm2Ratio],
                     \fm1Amount, p[\fm1Amount], \fm2Amount, p[\fm2Amount],
-                    \attack, p[\attack], \peak, p[\peak], \decay, p[\decay] * decayScale,
+                    \attack, p[\attack], \peak, p[\peak], \decay, p[\decay] * decayScale * sustainScale,
                     \reverbMix, p[\reverbMix], \foldMix, p[\foldMix], \body, p[\body],
                     \air, p[\air], \filterRq, p[\filterRq], \toneTilt, p[\toneTilt],
                     \amp, lane[\amp] * accent * 0.85,
@@ -1759,7 +2047,7 @@
                 });
                 self[\sendDexedNote].value(self,
                     d[\channel] ? 0,
-                    (pitch + (d[\octaveBias] ? 0)).clip(lane[\register][0], lane[\register][1]),
+                    (pitch + (d[\octaveBias] ? 0)).clip(0, 127),
                     ((d[\velocity] ? 82) * accent).clip(24, 126),
                     if(isPerc, { noteDur.clip(0.04, 0.65) }, { noteDur.clip(0.08, 8.0) })
                 );
@@ -1777,7 +2065,7 @@
                     });
                 });
                 self[\sendVitalNote].value(self,
-                    (pitch + (v[\octaveBias] ? 0)).clip(lane[\register][0], lane[\register][1]),
+                    (pitch + (v[\octaveBias] ? 0)).clip(0, 127),
                     ((v[\velocity] ? 82) * accent).clip(24, 126),
                     if(isPerc, { noteDur.clip(0.04, 0.55) }, { noteDur.clip(0.08, 10.0) })
                 );
@@ -1796,6 +2084,7 @@
             lane[\synths] = List.new;
             self[\buildFx].value(self, lane, lane[\sourceBus]);
             lane[\state] = \active;
+            self[\applyLaneOutput].value(self, lane);
             self[\restartLaneRoutine].value(self, lane, wasMuted);
             if(lane[\routine].isNil, {
                 ("EAP lane " ++ (lane[\slot] ? lane[\index] ? "?")
@@ -1927,6 +2216,73 @@
         });
     };
 
+    ~setSlotTranspose = { |self, slot, semitones|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var lane = self[\slots][index - 1];
+        var transpose = semitones.asInteger.clip(-36, 36);
+        if(lane.notNil, {
+            lane[\transpose] = transpose;
+            ("EAP slot " ++ index ++ " transpose=" ++ transpose).postln;
+            1;
+        }, {
+            0;
+        });
+    };
+
+    ~setGridFxActive = { |self, active|
+        var enabled = active.asBoolean;
+        self[\gridFxActive] = enabled;
+        if(self[\gridFxSendSynth].notNil, {
+            self[\gridFxSendSynth].set(\amp, if(enabled, { 1.0 }, { 0.0 }));
+        });
+        if(self[\masterSynth].notNil, {
+            self[\masterSynth].set(\gridActive, if(enabled, { 1 }, { 0 }));
+        });
+        self[\applyGridFxRouting].value(self);
+        ("EAP Airwindows grid FX active=" ++ enabled).postln;
+        enabled;
+    };
+
+    ~processGridFxQueue = { |self|
+        if((self[\gridFxProcessing] ? false).not, {
+            self[\gridFxProcessing] = true;
+            Routine({
+                while({ self[\gridFxQueue].size > 0 }, {
+                    var cmd = self[\gridFxQueue].removeAt(0);
+                    var result, active;
+                    self[\setGridFxActive].value(self, false);
+                    0.22.wait;
+                    result = cmd.unixCmdGetStdOut.stripWhiteSpace;
+                    active = result.contains("active=1") or: { result.contains("active=2") or: { result.contains("active=3") } };
+                    if(result.notEmpty, { ("EAP " ++ result).postln; });
+                    0.12.wait;
+                    self[\setGridFxActive].value(self, active);
+                });
+                self[\gridFxProcessing] = false;
+            }).play(SystemClock);
+        });
+    };
+
+    ~setGridFx = { |self, index, enabled|
+        var fxIndex = index.asInteger.clip(1, 30);
+        var state = if(enabled.asInteger > 0, { 1 }, { 0 });
+        self[\gridFxQueue].add("/usr/local/bin/eap-airwindows-grid-fx --set " ++ fxIndex ++ " " ++ state);
+        self[\processGridFxQueue].value(self);
+        true;
+    };
+
+    ~setGridFxScene = { |self, slot, enabled|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var state = enabled.asInteger > 0;
+        if(self[\gridFxScenes].isNil, {
+            self[\gridFxScenes] = Array.fill(self[\maxScenes], { false });
+        });
+        self[\gridFxScenes][index - 1] = state;
+        self[\applyGridFxRouting].value(self);
+        ("EAP Airwindows grid FX scene " ++ index ++ " selected=" ++ state).postln;
+        state;
+    };
+
     ~reverbArg = { |self, param, value|
         var v = value.asFloat.clip(0, 1);
         switch(param,
@@ -2023,10 +2379,12 @@
                 rhythmProfile: lane[\rhythmProfile], pulse: lane[\pulse], swing: lane[\swing],
                 amp: lane[\amp], level: lane[\level], pan: lane[\pan], density: lane[\density],
                 timbreMotion: lane[\timbreMotion], reverbSend: lane[\reverbSend],
+                transpose: lane[\transpose],
                 cpuClass: lane[\cpuClass],
                 plaitsModels: lane[\plaitsModels].copy,
                 ringsModel: lane[\ringsModel], rings: if(lane[\rings].notNil, { lane[\rings].copy }, { nil }),
                 soundModifier: lane[\soundModifier], lastDegree: lane[\lastDegree],
+                sourceEngine: lane[\sourceEngine], adaptive: if(lane[\adaptive].notNil, { lane[\adaptive].copy }, { nil }),
                 molly: lane[\molly].copy, passersby: lane[\passersby].copy,
                 dexed: lane[\dexed].copy, vital: lane[\vital].copy,
                 clouds: lane[\clouds].copy, state: lane[\state]
@@ -2062,6 +2420,16 @@
         lane[\density] = lane[\density] ? 1.0;
         lane[\timbreMotion] = lane[\timbreMotion] ? 0.0;
         lane[\reverbSend] = lane[\reverbSend] ? 0.5;
+        lane[\transpose] = (lane[\transpose] ? 0).asInteger.clip(-36, 36);
+        lane[\sourceEngine] = lane[\sourceEngine] ? \any;
+        lane[\adaptive] = lane[\adaptive] ? (
+            siblingCount: 0,
+            avoidMaterials: [],
+            overusedMaterials: [],
+            avoidRhythms: [],
+            avoidFx: [],
+            registerBand: self[\registerBandFor].value(self, lane[\register])
+        );
         lane[\cpuClass] = lane[\cpuClass] ? \normal;
         lane[\plaitsModels] = (lane[\plaitsModels] ? [0]).collect({ |model|
             if(self[\plaitsModelPool].includes(model), { model }, { self[\plaitsModelPool].choose });
@@ -2149,6 +2517,8 @@
         var index = slot.asInteger.clip(1, 64);
         var path = self[\sessionPath].value(self, index);
         var snapshot;
+        var loadedActive = 0;
+        var maxLoadedActive = 3;
         if(File.exists(path).not, {
             ("EAP session " ++ index ++ " is blank").postln;
             0;
@@ -2166,8 +2536,15 @@
                     self[\slots][laneIndex] = lane;
                     self[\lanes].add(lane);
                     if(lane[\state] == \active) {
-                        lane[\state] = \muted;
-                        self[\startLane].value(self, lane);
+                        if(loadedActive < maxLoadedActive, {
+                            loadedActive = loadedActive + 1;
+                            lane[\state] = \muted;
+                            self[\startLane].value(self, lane);
+                        }, {
+                            lane[\state] = \muted;
+                            ("EAP session " ++ index ++ " loaded slot " ++ (laneIndex + 1)
+                                ++ " muted: active lane cap").postln;
+                        });
                     };
                 };
             });
@@ -2182,6 +2559,8 @@
         self[\lanes].clear;
         self[\slots] = Array.fill(self[\maxScenes], { nil });
         self[\cloudLaneIndex] = nil;
+        self[\adaptiveJournal].clear;
+        self[\adaptiveSerial] = 0;
     };
 
     ~slotStatus = { |self, slot|
@@ -2202,7 +2581,8 @@
                 pan: lane[\pan] ? 0.0,
                 density: lane[\density] ? 1.0,
                 timbreMotion: lane[\timbreMotion] ? 0.0,
-                reverbSend: lane[\reverbSend] ? 0.5
+                reverbSend: lane[\reverbSend] ? 0.5,
+                transpose: lane[\transpose] ? 0
             );
         });
     };
@@ -2214,6 +2594,7 @@
             lane[\density] = (state[\density] ? 1.0).asFloat.clip(0.05, 1.0);
             lane[\timbreMotion] = (state[\timbreMotion] ? 0.0).asFloat.clip(0.0, 1.0);
             lane[\reverbSend] = (state[\reverbSend] ? 0.5).asFloat.clip(0.0, 1.0);
+            lane[\transpose] = (state[\transpose] ? 0).asInteger.clip(-36, 36);
             self[\applyLaneOutput].value(self, lane);
         };
         lane;
@@ -2224,11 +2605,15 @@
         var activeTotal;
         var oldLane = self[\slots][index - 1];
         var performanceState = self[\performanceStateForLane].value(oldLane);
+        var adaptive;
+        var action;
         var lane;
         if(modifier.isNil, {
             ("EAP slot " ++ index ++ " generation ignored: modifier required").postln;
             0;
         }, {
+            adaptive = self[\adaptiveContextForSlot].value(self, index, modifier);
+            action = if(oldLane.notNil and: { oldLane[\state] != \blank }, { \regenerate }, { \generate });
             if(oldLane.notNil) {
                 self[\stopLane].value(self, oldLane, \blank);
                 self[\lanes].remove(oldLane);
@@ -2239,21 +2624,25 @@
             }, {
                 nil;
             });
-            lane = self[\randomLane].value(self, index, activeTotal, modifier);
+            lane = self[\randomLane].value(self, index, activeTotal, modifier, adaptive);
             self[\applyPerformanceState].value(self, lane, performanceState);
             self[\slots][index - 1] = lane;
             self[\startLane].value(self, lane);
             self[\lanes].add(lane);
             self[\syncLoad].value(self);
+            self[\recordAdaptiveScene].value(self, lane, action);
             ("EAP slot " ++ index ++ " generated materials=" ++ lane[\materials].asString ++
                 " fx=" ++ lane[\fx] ++ " modifier=" ++ (lane[\soundModifier] ? \default)
                 ++ " sourceEngine=" ++ (self[\sourceEnginePreference] ? \any)
                 ++ " rhythm=" ++ (lane[\rhythmProfile] ? \unknown)
+                ++ " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0)
+                ++ " adaptiveRegister=" ++ ((lane[\adaptive] ? ())[\registerBand] ? \mid)
                 ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
                 ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
                 ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
                 ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
                 ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
+                ++ " transpose=" ++ (lane[\transpose] ? 0)
                 ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
             1;
         });
@@ -2293,14 +2682,17 @@
             self[\clear].value(self);
             self[\cloudLaneIndex] = if(n >= 5, { [0, rrand(1, n)].choose }, { nil });
             n.do({ |index|
-                var lane = self[\randomLane].value(self, index + 1, n, modifier);
+                var adaptive = self[\adaptiveContextForSlot].value(self, index + 1, modifier);
+                var lane = self[\randomLane].value(self, index + 1, n, modifier, adaptive);
                 lane[\state] = \muted;
                 self[\startLane].value(self, lane);
                 self[\lanes].add(lane);
                 self[\slots][index] = lane;
+                self[\recordAdaptiveScene].value(self, lane, \seed);
                 ("EAP random lane " ++ (index + 1) ++ "/" ++ n ++
                     " materials=" ++ lane[\materials].asString ++
                     " fx=" ++ lane[\fx] ++
+                    " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0) ++
                     " plaits=" ++ lane[\plaitsModels].asString).postln;
             });
             ("EAP random scene set active: " ++ n ++ " independent lanes").postln;
@@ -2312,6 +2704,7 @@
         if(self[\group].notNil) { self[\stop].value(self); };
         self[\group] = Group.tail(s);
         self[\masterBus] = Bus.audio(s, 2);
+        self[\gridFxBus] = Bus.audio(s, 2);
         self[\reverbBus] = Bus.audio(s, 2);
         self[\makeSynthDefs].value(self);
         s.sync;
@@ -2319,22 +2712,35 @@
         self[\reverbValues] = [0.24, 0.55, 0.45, 0.36, 0.25, 0.74, 0.24, 0.62];
         self[\masterValues] = [0.82, 0.0, 1.0, 0.12, 0.0];
         self[\masterGroup] = Group.after(self[\group]);
+        self[\gridFxActive] = false;
+        self[\gridFxScenes] = Array.fill(self[\maxScenes], { false });
+        self[\gridFxQueue].clear;
+        self[\gridFxProcessing] = false;
+        self[\gridFxSendSynth] = Synth.head(self[\masterGroup], \eapGridFxSend, [\in, self[\gridFxBus].index, \out, 2, \amp, 0.0]);
         self[\externalInputSynth] = Synth.head(self[\masterGroup], \eapExternalInput, [\out, self[\masterBus].index, \amp, 0.0]);
         self[\masterSynth] = Synth.tail(self[\masterGroup], \eapSceneMaster, [
             \in, self[\masterBus].index, \reverbIn, self[\reverbBus].index, \out, 0
         ]);
+        "/usr/local/bin/eap-airwindows-grid-fx --clear".unixCmdGetStdOut;
         self[\applyReverb].value(self);
         self[\applyMaster].value(self);
         self[\slots] = Array.fill(self[\maxScenes], { nil });
         self[\lanes].clear;
+        self[\adaptiveJournal].clear;
+        self[\adaptiveSerial] = 0;
         "EAP RandomScenes: started with blank slots".postln;
     };
 
     ~stop = { |self|
         self[\clear].value(self);
+        self[\gridFxQueue].clear;
+        self[\gridFxProcessing] = false;
+        "/usr/local/bin/eap-airwindows-grid-fx --clear".unixCmdGetStdOut;
         if(self[\externalInputSynth].notNil) { self[\externalInputSynth].free; self[\externalInputSynth] = nil; };
+        if(self[\gridFxSendSynth].notNil) { self[\gridFxSendSynth].free; self[\gridFxSendSynth] = nil; };
         if(self[\masterSynth].notNil) { self[\masterSynth].free; self[\masterSynth] = nil; };
         if(self[\masterBus].notNil) { self[\masterBus].free; self[\masterBus] = nil; };
+        if(self[\gridFxBus].notNil) { self[\gridFxBus].free; self[\gridFxBus] = nil; };
         if(self[\reverbBus].notNil) { self[\reverbBus].free; self[\reverbBus] = nil; };
         if(self[\masterGroup].notNil) { self[\masterGroup].free; self[\masterGroup] = nil; };
         if(self[\group].notNil) { self[\group].free; self[\group] = nil; };

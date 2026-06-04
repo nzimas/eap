@@ -11,12 +11,10 @@ fi
 health_status() {
     if systemctl is-active --quiet eap-jack.service \
         && systemctl is-active --quiet eap-supercollider.service \
-        && systemctl is-active --quiet eap-dexed.service \
         && systemctl is-active --quiet eap-launchpad.service; then
         printf "OK"
     elif systemctl is-failed --quiet eap-jack.service \
         || systemctl is-failed --quiet eap-supercollider.service \
-        || systemctl is-failed --quiet eap-dexed.service \
         || systemctl is-failed --quiet eap-launchpad.service; then
         printf "FAIL"
     else

@@ -51,71 +51,79 @@ rsync -avz --delete -e "$RSYNC_SSH" \
     "$ROOT/bin" "$ROOT/control" "$ROOT/supercollider" "$ROOT/deployment" \
     "${HOST}:${REMOTE_ROOT}/"
 
-"${SSH_CMD[@]}" "$HOST" "REMOTE_ROOT='$REMOTE_ROOT' RESTART='$RESTART' bash -s" <<'REMOTE'
+"${SSH_CMD[@]}" "$HOST" "REMOTE_ROOT='$REMOTE_ROOT' RESTART='$RESTART' EAP_PI_PASSWORD='${EAP_PI_PASSWORD:-}' bash -s" <<'REMOTE'
 set -euo pipefail
 
-SUDO=""
-if [[ "$(id -u)" -ne 0 ]]; then
-    SUDO="sudo"
-fi
+run_sudo() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "$@"
+    elif [[ -n "${EAP_PI_PASSWORD:-}" ]]; then
+        printf '%s\n' "$EAP_PI_PASSWORD" | sudo -S "$@"
+    else
+        sudo "$@"
+    fi
+}
 
-$SUDO install -d -m 0755 "$REMOTE_ROOT"
-$SUDO chown -R we:we "$REMOTE_ROOT" 2>/dev/null || true
-$SUDO install -d -m 0755 /usr/local/bin
-$SUDO install -d -m 0755 /etc/systemd/system/eap-jack.service.d
+run_sudo install -d -m 0755 "$REMOTE_ROOT"
+run_sudo chown -R we:we "$REMOTE_ROOT" 2>/dev/null || true
+run_sudo install -d -m 0755 /usr/local/bin
+run_sudo install -d -m 0755 /etc/systemd/system/eap-jack.service.d
 
-$SUDO install -m 0755 "$REMOTE_ROOT/bin/eap" /usr/local/bin/eap
+run_sudo install -m 0755 "$REMOTE_ROOT/bin/eap" /usr/local/bin/eap
 
 for script in "$REMOTE_ROOT/deployment/scripts/"*.sh; do
     name="$(basename "$script" .sh)"
-    $SUDO install -m 0755 "$script" "/usr/local/bin/$name"
+    run_sudo install -m 0755 "$script" "/usr/local/bin/$name"
 done
 for script in "$REMOTE_ROOT/deployment/scripts/"*.py; do
     name="$(basename "$script" .py)"
-    $SUDO install -m 0755 "$script" "/usr/local/bin/$name"
+    run_sudo install -m 0755 "$script" "/usr/local/bin/$name"
 done
 
-$SUDO tee /usr/local/bin/eap-launchpad >/dev/null <<'WRAPPER'
+tmp_wrapper="$(mktemp)"
+cat >"$tmp_wrapper" <<'WRAPPER'
 #!/usr/bin/env bash
 exec /usr/bin/python3 /opt/electroacoustic-playground/control/eap_launchpad.py "$@"
 WRAPPER
-$SUDO chmod 0755 /usr/local/bin/eap-launchpad
+run_sudo install -m 0755 "$tmp_wrapper" /usr/local/bin/eap-launchpad
+rm -f "$tmp_wrapper"
 
 for unit in eap-jack eap-supercollider eap-sc-connect eap-launchpad eap-dexed eap-dexed-connect eap-vital eap-vital-connect eap-console-status eap-k3-shutdown; do
     if [[ -f "$REMOTE_ROOT/deployment/systemd/${unit}.service" ]]; then
-        $SUDO install -m 0644 "$REMOTE_ROOT/deployment/systemd/${unit}.service" "/etc/systemd/system/${unit}.service"
+        run_sudo install -m 0644 "$REMOTE_ROOT/deployment/systemd/${unit}.service" "/etc/systemd/system/${unit}.service"
     fi
 done
 
 if [[ -f "$REMOTE_ROOT/deployment/systemd/eap-jack-p256-override.conf" ]]; then
-    $SUDO install -m 0644 "$REMOTE_ROOT/deployment/systemd/eap-jack-p256-override.conf" \
+    run_sudo install -m 0644 "$REMOTE_ROOT/deployment/systemd/eap-jack-p256-override.conf" \
         /etc/systemd/system/eap-jack.service.d/override.conf
 fi
 
 if [[ -d "$REMOTE_ROOT/deployment/systemd/getty@tty1.service.d" ]]; then
-    $SUDO install -d -m 0755 /etc/systemd/system/getty@tty1.service.d
-    $SUDO install -m 0644 "$REMOTE_ROOT/deployment/systemd/getty@tty1.service.d/autologin.conf" \
+    run_sudo install -d -m 0755 /etc/systemd/system/getty@tty1.service.d
+    run_sudo install -m 0644 "$REMOTE_ROOT/deployment/systemd/getty@tty1.service.d/autologin.conf" \
         /etc/systemd/system/getty@tty1.service.d/autologin.conf
 fi
 
-$SUDO systemctl daemon-reload
-$SUDO systemctl enable eap-jack.service eap-supercollider.service eap-sc-connect.service eap-launchpad.service \
-    eap-dexed.service eap-dexed-connect.service eap-console-status.service eap-k3-shutdown.service 2>/dev/null || true
+run_sudo systemctl daemon-reload
+run_sudo systemctl enable eap-jack.service eap-supercollider.service eap-sc-connect.service eap-launchpad.service \
+    eap-console-status.service eap-k3-shutdown.service 2>/dev/null || true
+run_sudo systemctl disable eap-dexed.service eap-dexed-connect.service eap-vital.service eap-vital-connect.service 2>/dev/null || true
 
 if [[ "$RESTART" == "1" ]]; then
-    $SUDO systemctl reset-failed eap-jack.service eap-supercollider.service 2>/dev/null || true
-    $SUDO systemctl restart eap-jack.service
+    run_sudo systemctl reset-failed eap-jack.service eap-supercollider.service 2>/dev/null || true
+    run_sudo systemctl restart eap-jack.service
     sleep 2
-    $SUDO systemctl restart eap-supercollider.service
+    run_sudo systemctl restart eap-supercollider.service
     sleep 5
-    $SUDO systemctl restart eap-sc-connect.service 2>/dev/null || true
-    $SUDO systemctl stop eap-dexed-connect.service eap-dexed.service 2>/dev/null || true
-    $SUDO systemctl restart eap-launchpad.service
-    $SUDO systemctl restart eap-console-status.service 2>/dev/null || true
+    run_sudo systemctl restart eap-sc-connect.service 2>/dev/null || true
+    run_sudo systemctl stop eap-dexed-connect.service eap-dexed.service 2>/dev/null || true
+    run_sudo systemctl restart eap-launchpad.service
+    run_sudo systemctl restart eap-console-status.service 2>/dev/null || true
 fi
 
 echo "Deployed to $REMOTE_ROOT"
-$SUDO systemctl is-active eap-jack.service eap-supercollider.service eap-launchpad.service || true
+run_sudo systemctl is-active eap-jack.service eap-supercollider.service eap-launchpad.service || true
 REMOTE
 
 echo "Done."
