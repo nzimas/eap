@@ -179,7 +179,7 @@ s.waitForBoot({
     }, '/eap/tuning');
 
     OSCdef(\eapSourceEngine, { |msg|
-        var code = (msg[1] ? 0).asInteger.clip(0, 7);
+        var code = (msg[1] ? 0).asInteger.clip(0, 8);
         ~eapScenes[\setSourceEnginePreference].value(~eapScenes, code);
     }, '/eap/engine');
 
@@ -187,6 +187,11 @@ s.waitForBoot({
         var result = ~eapScenes[\refreshDexed].value(~eapScenes);
         ("EAP Dexed rescan result=" ++ result).postln;
     }, '/eap/dexed/rescan');
+
+    OSCdef(\eapVcvRescan, { |msg|
+        var result = ~eapScenes[\refreshVcv].value(~eapScenes);
+        ("EAP VCV rescan result=" ++ result).postln;
+    }, '/eap/vcv/rescan');
 
     OSCdef(\eapTest, { |msg|
         var freq = (msg[1] ? 440).asFloat.clip(20, 4000);

@@ -1,0 +1,21 @@
+[Unit]
+Description=Electroacoustic Playground headless VCV Rack engine
+After=eap-jack.service
+Requires=eap-jack.service
+
+[Service]
+Type=simple
+User=we
+Group=audio
+Environment=HOME=/home/we
+Environment=XDG_CONFIG_HOME=/home/we/.config
+Environment=XDG_DATA_HOME=/home/we/.local/share
+Environment=JACK_NO_AUDIO_RESERVATION=1
+Environment=EAP_VCV_FOREGROUND=1
+EnvironmentFile=-/etc/default/eap-vcv
+ExecStart=/usr/local/bin/eap-start-vcv
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

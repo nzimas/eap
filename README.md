@@ -5,7 +5,7 @@ Electroacoustic Playground is a bespoke Raspberry Pi/Fates instrument stack buil
 The current stack includes:
 
 - SuperCollider scene-slot engine with up to eight Launchpad-addressable scene slots.
-- Random scene generation from Plaits, Rings, Passersby, Molly, fold-based material, optional external Dexed, and optional realtime Vital/Vitalium.
+- Random scene generation from Plaits, Rings, Passersby, Molly, fold-based material, optional external Dexed, optional realtime Vital/Vitalium, and optional headless VCV Rack.
 - Per-scene pedalboard or Clouds-style effects, bounded for CPU safety.
 - Launchpad Mini Mk3 controller daemon with scene toggles, long-press regeneration, sound-type modifiers (CC 19/29/39/49), LED states, and auxiliary pages for reverb, tuning, master dynamics, and sessions.
 - Systemd units and deployment helpers for the Fates/Pi environment.
@@ -46,7 +46,13 @@ Vital/Vitalium is treated as a realtime external JACK/MIDI instrument, not as an
 
 Use `eap-install-vitalium` on the Pi to build and install Vitalium LV2 plus the `jalv` host and MIDI bridge dependencies. Vital remains visible on the engine selector, but runtime launch is gated behind `EAP_ENABLE_VITAL=1` because the current Pi/JACK profile xruns with live Vitalium enabled.
 
-On the Scales / Root Note page, engine row 4 now maps left to right as: Any, Plaits, Rings, Passersby, Molly, Fold, Dexed, Vital/Vitalium.
+On the Scales / Root Note page, engine row 4 maps left to right as: Any, Plaits, Rings, Passersby, Molly, Fold, Dexed, Vital/Vitalium. VCV Rack is on row 5, column 1.
+
+## VCV Rack Integration
+
+VCV Rack is treated as an optional realtime external JACK/MIDI instrument. EAP starts Rack 2 in headless mode with a cached `.vcv` patch, lightly mutates compatible patch parameters, routes Rack audio back into SuperCollider inputs 3/4, and sends live MIDI notes from the same scale-aware sequencer used by the other engines.
+
+Use `eap-install-vcv-rack` on the Pi to build Rack for ARM64, install Fundamental, and create `/usr/local/bin/eap-rack`. Use `eap-vcv-sync-patches` to cache Patchstorage VCV Rack patches and `eap-vcv-modules` to attempt installation of third-party module dependencies. VCV is gated behind `EAP_ENABLE_VCV=1` until the Pi/JACK profile is verified stable.
 
 ## Airwindows Grid FX
 

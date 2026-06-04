@@ -58,6 +58,12 @@ def send_dexed_rescan(host: str = "127.0.0.1", port: int = 57120) -> None:
         sock.sendto(packet, (host, port))
 
 
+def send_vcv_rescan(host: str = "127.0.0.1", port: int = 57120) -> None:
+    packet = _osc_string("/eap/vcv/rescan") + _osc_string(",i") + _osc_int(1)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (host, port))
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="eap")
     parser.add_argument(
@@ -87,6 +93,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--scale", type=int, help="Set scale index, 0-7.")
     parser.add_argument("--root", type=int, default=0, help="With --scale, set root note as semitone, C=0 through B=11.")
     parser.add_argument("--dexed-rescan", action="store_true", help="Rescan for a headless Dexed MIDI destination.")
+    parser.add_argument("--vcv-rescan", action="store_true", help="Rescan for a headless VCV Rack MIDI destination.")
     parser.add_argument("--value", type=int, default=64, help="Value for --reverb-param or --master-param, 0-127.")
     args = parser.parse_args(argv)
     scene_count = max(1, min(args.n, 8))
@@ -127,6 +134,11 @@ def main(argv: list[str]) -> int:
     if args.dexed_rescan:
         send_dexed_rescan(args.host, args.port)
         print("rescanned Dexed MIDI destination")
+        return 0
+
+    if args.vcv_rescan:
+        send_vcv_rescan(args.host, args.port)
+        print("rescanned VCV Rack MIDI destination")
         return 0
 
     if args.slot is not None:

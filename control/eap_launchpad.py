@@ -86,7 +86,8 @@ RGB_GRID_FX_LOCKED_ACTIVE = (126, 0, 0)
 RGB_GRID_FX_LOCK_FLASH = (126, 0, 0)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
-ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6, 7]
+ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 9)] + [(5, 1)]
 AIRWINDOWS_FX = [
     "TapeDelay2", "PitchDelay", "Doublelay", "SampleDelay", "Melt", "ADT", "StarChild2", "TakeCare",
     "RingModulator", "Dubly3", "GalacticVibe", "Pafnuty2", "PitchNasty", "GuitarConditioner", "GlitchShifter", "Gringer",
@@ -772,6 +773,7 @@ def handle_master_note(note: int, values: list[int]) -> None:
 
 
 def paint_tuning_page(scale_index: int, root_index: int, engine_index: int = 0) -> None:
+    engine_positions = {position: index for index, position in enumerate(ENGINE_PAD_POSITIONS)}
     for note in MATRIX_NOTES:
         position = matrix_position(note)
         if position is None:
@@ -781,8 +783,8 @@ def paint_tuning_page(scale_index: int, root_index: int, engine_index: int = 0) 
             colour = RGB_TUNING_SELECTED if (col - 1) == scale_index else RGB_TUNING_VALUE
         elif row == 7 and col <= 7:
             colour = RGB_TUNING_SELECTED if (col - 1) == root_index else RGB_TUNING_DIM
-        elif row == 4 and col <= len(ENGINE_CODES):
-            colour = RGB_ENGINE_SELECTED if (col - 1) == engine_index else RGB_ENGINE_VALUE
+        elif (row, col) in engine_positions:
+            colour = RGB_ENGINE_SELECTED if engine_positions[(row, col)] == engine_index else RGB_ENGINE_VALUE
         else:
             colour = (0, 0, 0)
         send_led(note, colour)
@@ -797,8 +799,8 @@ def handle_tuning_note(note: int, tuning_values: list[int]) -> None:
         tuning_values[0] = col - 1
     elif row == 7 and col <= 7:
         tuning_values[1] = col - 1
-    elif row == 4 and col <= len(ENGINE_CODES):
-        tuning_values[2] = col - 1
+    elif (row, col) in ENGINE_PAD_POSITIONS:
+        tuning_values[2] = ENGINE_PAD_POSITIONS.index((row, col))
         send_engine_osc(ENGINE_CODES[tuning_values[2]])
         paint_tuning_page(tuning_values[0], tuning_values[1], tuning_values[2])
         return

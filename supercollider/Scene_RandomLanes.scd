@@ -25,6 +25,8 @@
     ~dexedAvailable = false;
     ~vitalMidi = nil;
     ~vitalAvailable = false;
+    ~vcvMidi = nil;
+    ~vcvAvailable = false;
     ~scaleIndex = 0;
     ~rootNote = 0;
     ~sourceEnginePreference = nil;
@@ -55,7 +57,7 @@
     ];
 
     ~soundModifierSymbols = [\percussive, \drone, \harmonic, \chaos];
-    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \fold, \dexed, \vital];
+    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \fold, \dexed, \vital, \vcv];
 
     ~modifierFromCode = { |self, code|
         var index = code.asInteger;
@@ -1161,6 +1163,75 @@
         });
     };
 
+    ~vcvRuntimeAvailable = { |self|
+        "sh -lc '[ \"${EAP_ENABLE_VCV:-0}\" = \"1\" ] && command -v eap-rack >/dev/null 2>&1 && command -v eap-vcv-patch >/dev/null 2>&1 && test -s \"${EAP_VCV_PATCH_CACHE:-/opt/electroacoustic-playground/vcv/patch-cache}/manifest.json\" && echo yes'".unixCmdGetStdOut.contains("yes");
+    };
+
+    ~refreshVcv = { |self|
+        var destination;
+        var alsaState;
+        if(MIDIClient.initialized.not, { MIDIClient.init; });
+        destination = MIDIClient.destinations.detect({ |endpoint|
+            var label = (endpoint.device.asString ++ " " ++ endpoint.name.asString).toLower;
+            label.contains("rack") or: { label.contains("vcv") };
+        });
+        if(destination.notNil, {
+            if(self[\vcvMidi].isNil, {
+                self[\vcvMidi] = MIDIOut.newByName(destination.device, destination.name);
+                ("EAP VCV MIDI connected: " ++ destination.device ++ " / " ++ destination.name).postln;
+            });
+            self[\vcvAvailable] = true;
+        }, {
+            alsaState = "aconnect -l 2>/dev/null".unixCmdGetStdOut.toLower;
+            if(alsaState.contains("rack") or: { alsaState.contains("vcv") }, {
+                if(self[\vcvMidi].isNil, {
+                    self[\vcvMidi] = MIDIOut(0);
+                    "EAP VCV MIDI using SuperCollider out0 subscription".postln;
+                });
+                self[\vcvAvailable] = true;
+            }, {
+                var jackState = "jack_lsp -c 2>/dev/null".unixCmdGetStdOut.toLower;
+                if((jackState.contains("rack") or: { jackState.contains("vcv") }) and: { jackState.contains("supercollider") and: { jackState.contains("out0") } }, {
+                    if(self[\vcvMidi].isNil, {
+                        self[\vcvMidi] = MIDIOut(0);
+                        "EAP VCV MIDI using bridged SuperCollider out0 -> JACK MIDI".postln;
+                    });
+                    self[\vcvAvailable] = true;
+                }, {
+                    if(self[\vcvAvailable], { "EAP VCV MIDI route disappeared".postln; });
+                    self[\vcvMidi] = nil;
+                    self[\vcvAvailable] = false;
+                });
+            });
+        });
+        self[\vcvAvailable];
+    };
+
+    ~loadVcvPatch = { |self, seed = 1, slot = 1, profile = nil|
+        var cmd = "/usr/local/bin/eap-vcv-patch --seed " ++ seed.asInteger.asString
+            ++ " --slot " ++ slot.asInteger.clip(1, self[\maxScenes]).asString
+            ++ " --profile " ++ (profile ? \default).asSymbol.asString;
+        var result = cmd.unixCmdGetStdOut.stripWhiteSpace;
+        if(result.notEmpty, { ("EAP " ++ result).postln; });
+        "/usr/local/bin/eap-connect-vcv-jack 30 0.25".unixCmdGetStdOut;
+        self[\refreshVcv].value(self);
+        result;
+    };
+
+    ~sendVcvNote = { |self, note = 60, velocity = 80, duration = 0.6|
+        var midi = self[\vcvMidi];
+        if(midi.isNil, { self[\refreshVcv].value(self); midi = self[\vcvMidi]; });
+        if(midi.notNil, {
+            var pitch = note.asInteger.clip(0, 127);
+            var vel = velocity.asInteger.clip(1, 127);
+            midi.noteOn(0, pitch, vel);
+            Routine({
+                duration.asFloat.clip(0.04, 12.0).wait;
+                midi.noteOff(0, pitch, 0);
+            }).play(SystemClock);
+        });
+    };
+
     ~chooseFxBackend = { |self, index, total, modifier|
         var allowClouds = total <= 2 and: { self[\hasActiveCloud].value(self).not };
         if(allowClouds.not, {
@@ -1475,12 +1546,26 @@
         var vitalPatchSeed = vital[\patchSeed];
         var vitalPatchInfo = "";
         var vitalAvailable = if(enginePreference == \vital, { self[\vitalRuntimeAvailable].value(self) }, { self[\refreshVital].value(self) });
+        var vcv = (
+            velocity: self[\rand].value(self, 48, 102).round(1),
+            durScale: self[\exprand].value(self, 0.30, 3.2),
+            octaveBias: [-12, 0, 0, 12].choose,
+            patchSeed: rrand(1, 2147483000),
+            patchInfo: "",
+            patchProfile: modifier ? \default
+        );
+        var vcvPatchSeed = vcv[\patchSeed];
+        var vcvPatchInfo = "";
+        var vcvAvailable = if(enginePreference == \vcv, { self[\vcvRuntimeAvailable].value(self) }, { self[\refreshVcv].value(self) });
         var cpuClass = \normal;
         if(dexedAvailable, {
             materialPool = materialPool ++ [\dexed, \dexed];
         });
         if(vitalAvailable, {
             materialPool = materialPool ++ [\vital, \vital];
+        });
+        if(vcvAvailable, {
+            materialPool = materialPool ++ [\vcv, \vcv];
         });
         switch(modifier,
             \percussive, {
@@ -1529,6 +1614,10 @@
                 vital[\durScale] = self[\exprand].value(self, 0.06, 0.38);
                 vital[\octaveBias] = [-12, 0, 0, 12].choose;
                 vital[\patchProfile] = \percussive;
+                vcv[\velocity] = self[\rand].value(self, 70, 118).round(1);
+                vcv[\durScale] = self[\exprand].value(self, 0.08, 0.45);
+                vcv[\octaveBias] = [-12, 0, 0, 12].choose;
+                vcv[\patchProfile] = \percussive;
                 if(fx == \clouds, {
                     clouds[\dens] = self[\rand].value(self, 0.45, 0.95);
                     clouds[\size] = self[\rand].value(self, 0.08, 0.35);
@@ -1558,6 +1647,9 @@
                 vital[\durScale] = self[\exprand].value(self, 2.0, 7.0);
                 vital[\octaveBias] = [-24, -12, -12, 0].choose;
                 vital[\patchProfile] = \drone;
+                vcv[\durScale] = self[\exprand].value(self, 2.2, 8.0);
+                vcv[\octaveBias] = [-24, -12, 0].choose;
+                vcv[\patchProfile] = \drone;
                 if(fx == \clouds, {
                     clouds[\size] = self[\rand].value(self, 0.55, 0.98);
                     clouds[\dens] = self[\rand].value(self, 0.08, 0.38);
@@ -1586,6 +1678,9 @@
                 vital[\durScale] = self[\exprand].value(self, 0.8, 3.6);
                 vital[\octaveBias] = [-12, 0, 0, 12].choose;
                 vital[\patchProfile] = \harmonic;
+                vcv[\durScale] = self[\exprand].value(self, 0.7, 3.8);
+                vcv[\octaveBias] = [-12, 0, 0, 12].choose;
+                vcv[\patchProfile] = \harmonic;
                 if(fx == \clouds, {
                     clouds[\spread] = self[\rand].value(self, 0.55, 0.98);
                     clouds[\rvb] = self[\rand].value(self, 0.22, 0.62);
@@ -1615,6 +1710,10 @@
                 vital[\durScale] = self[\exprand].value(self, 0.08, 1.6);
                 vital[\octaveBias] = [-24, -12, 0, 12, 24].choose;
                 vital[\patchProfile] = \chaos;
+                vcv[\velocity] = self[\rand].value(self, 42, 120).round(1);
+                vcv[\durScale] = self[\exprand].value(self, 0.08, 1.8);
+                vcv[\octaveBias] = [-24, -12, 0, 12, 24].choose;
+                vcv[\patchProfile] = \chaos;
                 if(fx == \clouds, {
                     clouds[\dens] = self[\rand].value(self, 0.35, 0.92);
                     clouds[\fb] = self[\rand].value(self, 0.12, 0.55);
@@ -1648,7 +1747,11 @@
                 if(enginePreference == \vital and: { vitalAvailable.not }, {
                     "EAP future source engine vital unavailable; using modifier material pool".postln;
                 }, {
-                    materialPool = [enginePreference];
+                    if(enginePreference == \vcv and: { vcvAvailable.not }, {
+                        "EAP future source engine vcv unavailable; using modifier material pool".postln;
+                    }, {
+                        materialPool = [enginePreference];
+                    });
                 });
             });
         });
@@ -1678,6 +1781,15 @@
                 { [\plaits, \rings, \fold, \passersby].choose }
             );
         });
+        if(enginePreference != \vcv and: { materials.select({ |source| source != \vcv }).isEmpty }, {
+            materials[0] = switch(modifier,
+                \percussive, { [\fold, \plaits, \passersby].choose },
+                \chaos, { [\fold, \passersby, \plaits].choose },
+                \drone, { [\rings, \passersby, \molly].choose },
+                \harmonic, { [\rings, \plaits, \molly].choose },
+                { [\plaits, \rings, \fold, \passersby].choose }
+            );
+        });
         cpuClass = if(fx == \clouds, {
             \heavy;
         }, {
@@ -1695,8 +1807,12 @@
             vitalPatchInfo = self[\loadVitalPatch].value(self, vitalPatchSeed, index, vital[\patchProfile]);
             vital[\patchInfo] = vitalPatchInfo;
         });
-        if(materials.includes(\vital) and: { fx == \clouds }, {
-            "EAP Vital scene using pedalboard instead of Clouds for Pi CPU headroom".postln;
+        if(materials.includes(\vcv), {
+            vcvPatchInfo = self[\loadVcvPatch].value(self, vcvPatchSeed, index, vcv[\patchProfile]);
+            vcv[\patchInfo] = vcvPatchInfo;
+        });
+        if((materials.includes(\vital) or: { materials.includes(\vcv) }) and: { fx == \clouds }, {
+            "EAP external scene using pedalboard instead of Clouds for Pi CPU headroom".postln;
             fx = \pedalboard;
         });
         if(adaptive.notNil and: { (adaptive[\avoidFx] ? []).includes(fx) }, {
@@ -1743,6 +1859,7 @@
             passersby: passersby,
             dexed: dexed,
             vital: vital,
+            vcv: vcv,
             clouds: clouds,
             state: \blank
         );
@@ -2070,6 +2187,24 @@
                     if(isPerc, { noteDur.clip(0.04, 0.55) }, { noteDur.clip(0.08, 10.0) })
                 );
             };
+            if(source == \vcv) {
+                var v = lane[\vcv];
+                var noteDur = lane[\gap] * (v[\durScale] ? 1.0) * decayScale;
+                if(self[\externalInputSynth].notNil, {
+                    self[\externalInputSynth].set(\amp, 0.66, \fadeTime, 0.03);
+                    SystemClock.sched(noteDur.clip(0.06, 10.0) + 0.25, {
+                        if(self[\externalInputSynth].notNil, {
+                            self[\externalInputSynth].set(\amp, 0.0, \fadeTime, 0.12);
+                        });
+                        nil;
+                    });
+                });
+                self[\sendVcvNote].value(self,
+                    (pitch + (v[\octaveBias] ? 0)).clip(0, 127),
+                    ((v[\velocity] ? 82) * accent).clip(24, 126),
+                    if(isPerc, { noteDur.clip(0.04, 0.65) }, { noteDur.clip(0.08, 10.0) })
+                );
+            };
         });
     };
 
@@ -2394,7 +2529,7 @@
                 soundModifier: lane[\soundModifier], lastDegree: lane[\lastDegree],
                 sourceEngine: lane[\sourceEngine], adaptive: if(lane[\adaptive].notNil, { lane[\adaptive].copy }, { nil }),
                 molly: lane[\molly].copy, passersby: lane[\passersby].copy,
-                dexed: lane[\dexed].copy, vital: lane[\vital].copy,
+                dexed: lane[\dexed].copy, vital: lane[\vital].copy, vcv: lane[\vcv].copy,
                 clouds: lane[\clouds].copy, state: lane[\state]
             );
         });
@@ -2405,6 +2540,7 @@
         var p = lane[\passersby];
         var d = lane[\dexed];
         var v = lane[\vital];
+        var r = lane[\vcv];
         lane[\index] = index + 1;
         lane[\slot] = index + 1;
         lane[\group] = nil;
@@ -2498,6 +2634,14 @@
             v[\patchSeed] = v[\patchSeed] ? 0;
             v[\patchProfile] = v[\patchProfile] ? \default;
             v[\patchInfo] = v[\patchInfo] ? "";
+        };
+        if(r.notNil) {
+            r[\velocity] = (r[\velocity] ? 82).clip(24, 126);
+            r[\durScale] = (r[\durScale] ? 1.0).clip(0.04, 10.0);
+            r[\octaveBias] = if([-24, -12, 0, 12, 24].includes(r[\octaveBias]), { r[\octaveBias] }, { 0 });
+            r[\patchSeed] = r[\patchSeed] ? 0;
+            r[\patchProfile] = r[\patchProfile] ? \default;
+            r[\patchInfo] = r[\patchInfo] ? "";
         };
         lane;
     };

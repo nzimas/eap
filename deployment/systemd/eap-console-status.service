@@ -1,7 +1,7 @@
 [Unit]
 Description=Electroacoustic Playground console ready display
-After=getty@tty1.service eap-jack.service eap-supercollider.service eap-dexed.service eap-dexed-connect.service eap-launchpad.service
-Wants=getty@tty1.service eap-jack.service eap-supercollider.service eap-dexed.service eap-dexed-connect.service eap-launchpad.service
+After=getty@tty1.service eap-jack.service eap-supercollider.service eap-launchpad.service
+Wants=getty@tty1.service eap-jack.service eap-supercollider.service eap-launchpad.service
 
 [Service]
 Type=simple

@@ -46,6 +46,8 @@ rsync -avz --delete -e "$RSYNC_SSH" \
     --exclude 'vendor/' \
     --exclude 'hardware/' \
     --exclude 'docs/' \
+    --exclude '__pycache__/' \
+    --exclude '*.pyc' \
     --exclude 'raspios_*.img' \
     --exclude '.DS_Store' \
     "$ROOT/bin" "$ROOT/control" "$ROOT/supercollider" "$ROOT/deployment" \
@@ -88,7 +90,7 @@ WRAPPER
 run_sudo install -m 0755 "$tmp_wrapper" /usr/local/bin/eap-launchpad
 rm -f "$tmp_wrapper"
 
-for unit in eap-jack eap-supercollider eap-sc-connect eap-launchpad eap-dexed eap-dexed-connect eap-vital eap-vital-connect eap-console-status eap-k3-shutdown; do
+for unit in eap-jack eap-supercollider eap-sc-connect eap-launchpad eap-dexed eap-dexed-connect eap-vital eap-vital-connect eap-vcv eap-vcv-connect eap-console-status eap-k3-shutdown; do
     if [[ -f "$REMOTE_ROOT/deployment/systemd/${unit}.service" ]]; then
         run_sudo install -m 0644 "$REMOTE_ROOT/deployment/systemd/${unit}.service" "/etc/systemd/system/${unit}.service"
     fi
@@ -108,7 +110,7 @@ fi
 run_sudo systemctl daemon-reload
 run_sudo systemctl enable eap-jack.service eap-supercollider.service eap-sc-connect.service eap-launchpad.service \
     eap-console-status.service eap-k3-shutdown.service 2>/dev/null || true
-run_sudo systemctl disable eap-dexed.service eap-dexed-connect.service eap-vital.service eap-vital-connect.service 2>/dev/null || true
+run_sudo systemctl disable eap-dexed.service eap-dexed-connect.service eap-vital.service eap-vital-connect.service eap-vcv.service eap-vcv-connect.service 2>/dev/null || true
 
 if [[ "$RESTART" == "1" ]]; then
     run_sudo systemctl reset-failed eap-jack.service eap-supercollider.service 2>/dev/null || true
@@ -117,7 +119,7 @@ if [[ "$RESTART" == "1" ]]; then
     run_sudo systemctl restart eap-supercollider.service
     sleep 5
     run_sudo systemctl restart eap-sc-connect.service 2>/dev/null || true
-    run_sudo systemctl stop eap-dexed-connect.service eap-dexed.service 2>/dev/null || true
+    run_sudo systemctl stop eap-vcv-connect.service eap-vcv.service eap-dexed-connect.service eap-dexed.service 2>/dev/null || true
     run_sudo systemctl restart eap-launchpad.service
     run_sudo systemctl restart eap-console-status.service 2>/dev/null || true
 fi

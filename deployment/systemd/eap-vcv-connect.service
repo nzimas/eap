@@ -1,0 +1,18 @@
+[Unit]
+Description=Electroacoustic Playground VCV Rack JACK wiring
+After=eap-jack.service eap-supercollider.service eap-vcv.service
+Requires=eap-jack.service eap-supercollider.service
+Wants=eap-vcv.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=we
+Group=audio
+Environment=JACK_NO_AUDIO_RESERVATION=1
+EnvironmentFile=-/etc/default/eap-vcv
+LimitMEMLOCK=infinity
+ExecStart=/usr/local/bin/eap-connect-vcv-jack 80 0.5
+
+[Install]
+WantedBy=multi-user.target
