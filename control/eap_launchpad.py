@@ -81,6 +81,9 @@ RGB_GRID_FX_AVAILABLE = (58, 28, 0)
 RGB_GRID_FX_ACTIVE = (126, 92, 12)
 RGB_GRID_FX_SCENE_ACTIVE = (0, 62, 14)
 RGB_GRID_FX_SCENE_SELECTED = (0, 126, 42)
+RGB_GRID_FX_LOCKED = (24, 0, 0)
+RGB_GRID_FX_LOCKED_ACTIVE = (126, 0, 0)
+RGB_GRID_FX_LOCK_FLASH = (126, 0, 0)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
 ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -186,6 +189,53 @@ def send_grid_fx_scene_osc(slot: int, enabled: bool) -> None:
     packet += struct.pack(">ii", int(slot), 1 if enabled else 0)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_grid_fx_lock_osc(index: int, locked: bool) -> None:
+    packet = osc_string("/eap/gridfx/lock") + osc_string(",ii")
+    packet += struct.pack(">ii", int(index), 1 if locked else 0)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def parse_status_indices(output: str, field: str) -> set[int]:
+    match = re.search(rf"{field}=\[([^\]]*)\]", output)
+    if match is None:
+        return set()
+    values: set[int] = set()
+    for item in match.group(1).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            values.add(int(item))
+        except ValueError:
+            pass
+    return values
+
+
+def sync_grid_fx_status(active_fx: list[int], locked_fx: set[int]) -> None:
+    try:
+        output = subprocess.check_output(["/usr/local/bin/eap-airwindows-grid-fx", "--status"], text=True)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return
+    active_fx[:] = [index for index in sorted(parse_status_indices(output, "indices")) if 1 <= index <= len(AIRWINDOWS_FX)]
+    locked_fx.clear()
+    locked_fx.update(index for index in parse_status_indices(output, "locked") if 1 <= index <= len(AIRWINDOWS_FX))
+
+
+def ensure_grid_fx_scene_selection(pads: dict[int, Pad], selected_scenes: set[int]) -> None:
+    active_slots = {
+        slot_for_note(note)
+        for note, pad in pads.items()
+        if pad.state == STATE_ACTIVE
+    }
+    selected_scenes.intersection_update(active_slots)
+    if selected_scenes:
+        return
+    selected_scenes.update(active_slots)
+    for slot in sorted(selected_scenes):
+        send_grid_fx_scene_osc(slot, True)
 
 
 def modifier_index_for_cc(cc: int) -> int:
@@ -555,7 +605,12 @@ def grid_fx_index_for_note(note: int) -> int | None:
     return None
 
 
-def paint_grid_fx_page(active_fx: list[int], pads: dict[int, Pad], selected_scenes: set[int]) -> None:
+def paint_grid_fx_page(
+    active_fx: list[int],
+    pads: dict[int, Pad],
+    selected_scenes: set[int],
+    locked_fx: set[int],
+) -> None:
     active = set(active_fx)
     for note in MATRIX_NOTES:
         position = matrix_position(note)
@@ -576,6 +631,10 @@ def paint_grid_fx_page(active_fx: list[int], pads: dict[int, Pad], selected_scen
         index = grid_fx_index_for_note(note)
         if index is None:
             send_led(note, RGB_GRID_FX_DIM)
+        elif index in locked_fx and index in active:
+            send_led(note, RGB_GRID_FX_LOCKED_ACTIVE)
+        elif index in locked_fx:
+            send_led(note, RGB_GRID_FX_LOCKED)
         elif index in active:
             send_led(note, RGB_GRID_FX_ACTIVE)
         else:
@@ -583,7 +642,19 @@ def paint_grid_fx_page(active_fx: list[int], pads: dict[int, Pad], selected_scen
     send_led(GRID_FX_CC, RGB_GRID_FX_PAGE)
 
 
-def handle_grid_fx_note(note: int, active_fx: list[int], pads: dict[int, Pad], selected_scenes: set[int]) -> bool:
+def flash_grid_fx_lock(note: int) -> None:
+    for colour in (RGB_GRID_FX_LOCK_FLASH, (0, 0, 0), RGB_GRID_FX_LOCK_FLASH):
+        send_led(note, colour)
+        time.sleep(0.05)
+
+
+def handle_grid_fx_note(
+    note: int,
+    active_fx: list[int],
+    pads: dict[int, Pad],
+    selected_scenes: set[int],
+    locked_fx: set[int],
+) -> bool:
     position = matrix_position(note)
     if position is not None and position[0] == 1:
         pad = pads.get(note)
@@ -596,7 +667,7 @@ def handle_grid_fx_note(note: int, active_fx: list[int], pads: dict[int, Pad], s
         else:
             selected_scenes.add(slot)
             send_grid_fx_scene_osc(slot, True)
-        paint_grid_fx_page(active_fx, pads, selected_scenes)
+        paint_grid_fx_page(active_fx, pads, selected_scenes, locked_fx)
         return True
 
     index = grid_fx_index_for_note(note)
@@ -606,13 +677,39 @@ def handle_grid_fx_note(note: int, active_fx: list[int], pads: dict[int, Pad], s
         active_fx.remove(index)
         send_grid_fx_osc(index, False)
     else:
+        ensure_grid_fx_scene_selection(pads, selected_scenes)
         while len(active_fx) >= MAX_GRID_FX_ACTIVE:
             removed = active_fx.pop(0)
             send_grid_fx_osc(removed, False)
         active_fx.append(index)
         send_grid_fx_osc(index, True)
-    paint_grid_fx_page(active_fx, pads, selected_scenes)
+    paint_grid_fx_page(active_fx, pads, selected_scenes, locked_fx)
     return True
+
+
+def handle_grid_fx_release(
+    note: int,
+    pressed_at: float | None,
+    active_fx: list[int],
+    pads: dict[int, Pad],
+    selected_scenes: set[int],
+    locked_fx: set[int],
+) -> bool:
+    if pressed_at is None:
+        return False
+    held_for = time.monotonic() - pressed_at
+    index = grid_fx_index_for_note(note)
+    if index is not None and held_for >= LONG_PRESS_SECONDS:
+        if index in locked_fx:
+            locked_fx.remove(index)
+            send_grid_fx_lock_osc(index, False)
+        else:
+            locked_fx.add(index)
+            send_grid_fx_lock_osc(index, True)
+        flash_grid_fx_lock(note)
+        paint_grid_fx_page(active_fx, pads, selected_scenes, locked_fx)
+        return True
+    return handle_grid_fx_note(note, active_fx, pads, selected_scenes, locked_fx)
 
 
 def paint_reverb_page(values: list[int]) -> None:
@@ -879,6 +976,8 @@ def main() -> int:
     performance_interacted = False
     grid_fx_active: list[int] = []
     grid_fx_scenes: set[int] = set()
+    grid_fx_locked: set[int] = set()
+    grid_fx_pressed: dict[int, float] = {}
     paint_scene_page(pads, held_modifier_cc)
 
     while True:
@@ -973,7 +1072,10 @@ def main() -> int:
                             mode = "gridfx"
                             performance_slot = None
                             performance_scene_note = None
-                            paint_grid_fx_page(grid_fx_active, pads, grid_fx_scenes)
+                            grid_fx_pressed.clear()
+                            sync_grid_fx_status(grid_fx_active, grid_fx_locked)
+                            ensure_grid_fx_scene_selection(pads, grid_fx_scenes)
+                            paint_grid_fx_page(grid_fx_active, pads, grid_fx_scenes, grid_fx_locked)
                 continue
 
             note = data
@@ -1028,7 +1130,10 @@ def main() -> int:
 
             if mode == "gridfx":
                 if kind == "on":
-                    handle_grid_fx_note(note, grid_fx_active, pads, grid_fx_scenes)
+                    grid_fx_pressed[note] = time.monotonic()
+                else:
+                    pressed_at = grid_fx_pressed.pop(note, None)
+                    handle_grid_fx_release(note, pressed_at, grid_fx_active, pads, grid_fx_scenes, grid_fx_locked)
                 continue
 
             pad = pads.get(note)

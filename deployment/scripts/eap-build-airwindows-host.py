@@ -171,10 +171,15 @@ HOST_SUFFIX = r'''
     }
 }
 
-static void install_chain(const std::vector<int>& indices, uint32_t seed) {
+struct FxSpec {
+    int index;
+    uint32_t seed;
+};
+
+static void install_chain(const std::vector<FxSpec>& specs) {
     std::unique_ptr<Chain> next(new Chain());
-    for (size_t i = 0; i < indices.size() && i < 3; ++i) {
-        auto proc = make_processor(indices[i], seed + static_cast<uint32_t>((i + 1) * 9973));
+    for (size_t i = 0; i < specs.size() && i < 3; ++i) {
+        auto proc = make_processor(specs[i].index, specs[i].seed);
         if (proc) next->processors.push_back(std::move(proc));
     }
     Chain* raw = next.release();
@@ -215,23 +220,32 @@ static int process_cb(jack_nframes_t nframes, void*) {
     return 0;
 }
 
-static std::vector<int> parse_indices(const std::string& text) {
-    std::vector<int> indices;
-    std::istringstream stream(text);
-    std::string token;
-    stream >> token;
-    while (stream >> token) {
-        if (token == "seed") break;
-        int value = std::atoi(token.c_str());
-        if (value >= 1 && value <= 30) indices.push_back(value);
-    }
-    return indices;
-}
-
 static uint32_t parse_seed(const std::string& text) {
     auto pos = text.find("seed ");
     if (pos == std::string::npos) return static_cast<uint32_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
     return static_cast<uint32_t>(std::strtoul(text.c_str() + pos + 5, nullptr, 10));
+}
+
+static std::vector<FxSpec> parse_specs(const std::string& text) {
+    std::vector<FxSpec> specs;
+    std::istringstream stream(text);
+    std::string token;
+    stream >> token;
+    uint32_t chain_seed = parse_seed(text);
+    size_t slot = 0;
+    while (stream >> token) {
+        if (token == "seed") break;
+        auto sep = token.find(':');
+        int index = std::atoi(token.c_str());
+        uint32_t seed = sep == std::string::npos
+            ? chain_seed + static_cast<uint32_t>((slot + 1) * 9973)
+            : static_cast<uint32_t>(std::strtoul(token.c_str() + sep + 1, nullptr, 10));
+        if (index >= 1 && index <= 30) {
+            specs.push_back(FxSpec{index, seed});
+            ++slot;
+        }
+    }
+    return specs;
 }
 
 static void control_loop(uint16_t port) {
@@ -259,10 +273,10 @@ static void control_loop(uint16_t port) {
             break;
         }
         if (msg.find("SET") == 0) {
-            install_chain(parse_indices(msg), parse_seed(msg));
+            install_chain(parse_specs(msg));
         }
         if (msg.find("CLEAR") == 0) {
-            install_chain({}, parse_seed(msg));
+            install_chain({});
         }
     }
     close(fd);

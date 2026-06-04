@@ -147,6 +147,12 @@ s.waitForBoot({
         ~eapScenes[\setGridFx].value(~eapScenes, index, enabled);
     }, '/eap/gridfx');
 
+    OSCdef(\eapGridFxLock, { |msg|
+        var index = (msg[1] ? 1).asInteger.clip(1, 30);
+        var locked = (msg[2] ? 0).asInteger.clip(0, 1);
+        ~eapScenes[\setGridFxLock].value(~eapScenes, index, locked);
+    }, '/eap/gridfx/lock');
+
     OSCdef(\eapGridFxScene, { |msg|
         var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
         var enabled = (msg[2] ? 0).asInteger.clip(0, 1);

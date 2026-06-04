@@ -2271,6 +2271,14 @@
         true;
     };
 
+    ~setGridFxLock = { |self, index, locked|
+        var fxIndex = index.asInteger.clip(1, 30);
+        var state = if(locked.asInteger > 0, { 1 }, { 0 });
+        self[\gridFxQueue].add("/usr/local/bin/eap-airwindows-grid-fx --lock " ++ fxIndex ++ " " ++ state);
+        self[\processGridFxQueue].value(self);
+        true;
+    };
+
     ~setGridFxScene = { |self, slot, enabled|
         var index = slot.asInteger.clip(1, self[\maxScenes]);
         var state = enabled.asInteger > 0;

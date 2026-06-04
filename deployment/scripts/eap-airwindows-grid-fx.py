@@ -34,6 +34,25 @@ HOST_PORT = int(os.environ.get("EAP_AIRWINDOWS_HOST_PORT", "57930"))
 HOST_LOG = LOG_DIR / "eap-airwindows-host.log"
 
 
+def new_seed() -> int:
+    return time.time_ns() & 0xFFFFFFFF
+
+
+def normalized_seed_map(value: object) -> dict[str, int]:
+    seeds: dict[str, int] = {}
+    if not isinstance(value, dict):
+        return seeds
+    for raw_index, raw_seed in value.items():
+        try:
+            index = int(raw_index)
+            seed = int(raw_seed) & 0xFFFFFFFF
+        except (TypeError, ValueError):
+            continue
+        if 1 <= index <= len(FX_NAMES):
+            seeds[str(index)] = seed
+    return seeds
+
+
 def run(args: list[str], check: bool = False) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check)
 
@@ -165,14 +184,16 @@ def start_host_if_needed(state: dict) -> int:
 
 def load_state() -> dict:
     if not STATE_PATH.exists():
-        return {"active": [], "pids": []}
+        return {"active": [], "pids": [], "locked": {}, "active_seeds": {}}
     try:
         data = json.loads(STATE_PATH.read_text())
     except Exception:
-        return {"active": [], "pids": []}
+        return {"active": [], "pids": [], "locked": {}, "active_seeds": {}}
     data["active"] = [int(i) for i in data.get("active", []) if 1 <= int(i) <= len(FX_NAMES)]
     data["pids"] = [int(pid) for pid in data.get("pids", []) if int(pid) > 0]
     data["host_pid"] = int(data.get("host_pid", 0) or 0)
+    data["locked"] = normalized_seed_map(data.get("locked", {}))
+    data["active_seeds"] = normalized_seed_map(data.get("active_seeds", {}))
     return data
 
 
@@ -183,16 +204,26 @@ def save_state(active: list[int], pids: list[int]) -> None:
         "active": active,
         "pids": pids,
         "host_pid": int(previous.get("host_pid", 0) or 0),
+        "locked": previous.get("locked", {}),
+        "active_seeds": previous.get("active_seeds", {}),
         "updated_at": time.time(),
     }, indent=2))
 
 
-def save_host_state(active: list[int], host_pid: int) -> None:
+def save_host_state(
+    active: list[int],
+    host_pid: int,
+    locked: dict[str, int] | None = None,
+    active_seeds: dict[str, int] | None = None,
+) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    previous = load_state()
     STATE_PATH.write_text(json.dumps({
         "active": active,
         "pids": [],
         "host_pid": host_pid,
+        "locked": locked if locked is not None else previous.get("locked", {}),
+        "active_seeds": active_seeds if active_seeds is not None else previous.get("active_seeds", {}),
         "updated_at": time.time(),
     }, indent=2))
 
@@ -360,14 +391,31 @@ def rebuild_chain(active: list[int]) -> tuple[list[int], list[str]]:
     return pids, messages
 
 
+def chain_message(active: list[int], locked: dict[str, int], active_seeds: dict[str, int]) -> str:
+    specs = []
+    for index in active:
+        key = str(index)
+        seed = locked.get(key, active_seeds.get(key, new_seed()))
+        active_seeds[key] = seed
+        specs.append(f"{index}:{seed}")
+    return "SET " + " ".join(specs)
+
+
 def set_fx(index: int, enabled: bool) -> str:
     with locked_state():
         state = load_state()
+        locked = dict(state.get("locked", {}))
+        active_seeds = dict(state.get("active_seeds", {}))
         active = [i for i in state["active"] if i != index]
         if enabled:
             active.append(index)
+            key = str(index)
+            active_seeds[key] = locked.get(key, new_seed())
+        else:
+            active_seeds.pop(str(index), None)
         while len(active) > MAX_ACTIVE:
-            active.pop(0)
+            removed = active.pop(0)
+            active_seeds.pop(str(removed), None)
         if not active:
             if state["pids"]:
                 kill_old(state["pids"])
@@ -377,16 +425,34 @@ def set_fx(index: int, enabled: bool) -> str:
                 time.sleep(0.1)
             kill_hosts()
             disconnect_insert_ports()
-            save_host_state([], 0)
+            save_host_state([], 0, locked, {})
             return "active=0 stopped"
         if state["pids"]:
             kill_old(state["pids"])
         host_pid = start_host_if_needed(state)
-        seed = time.time_ns() & 0xFFFFFFFF
-        send_host("SET " + " ".join(str(i) for i in active) + f" seed {seed}")
-        save_host_state(active, host_pid)
+        send_host(chain_message(active, locked, active_seeds))
+        save_host_state(active, host_pid, locked, active_seeds)
         names = [FX_NAMES[i - 1] for i in active]
         return "active={} host={} {}".format(len(active), host_pid, " ".join(names)).strip()
+
+
+def lock_fx(index: int, enabled: bool) -> str:
+    with locked_state():
+        state = load_state()
+        locked = dict(state.get("locked", {}))
+        active_seeds = dict(state.get("active_seeds", {}))
+        active = list(state["active"])
+        key = str(index)
+        if enabled:
+            locked[key] = active_seeds.get(key, locked.get(key, new_seed()))
+            active_seeds[key] = locked[key]
+        else:
+            locked.pop(key, None)
+        host_pid = int(state.get("host_pid", 0) or 0)
+        if active and pid_alive(host_pid):
+            send_host(chain_message(active, locked, active_seeds))
+        save_host_state(active, host_pid, locked, active_seeds)
+        return "locked={} active={} {}".format(len(locked), len(active), FX_NAMES[index - 1]).strip()
 
 
 def clear() -> str:
@@ -396,11 +462,11 @@ def clear() -> str:
             kill_old(state["pids"])
         host_pid = int(state.get("host_pid", 0) or 0)
         if pid_alive(host_pid):
-            send_host(f"CLEAR seed {time.time_ns() & 0xFFFFFFFF}")
+            send_host(f"CLEAR seed {new_seed()}")
             time.sleep(0.1)
         kill_hosts()
         disconnect_insert_ports()
-        save_host_state([], 0)
+        save_host_state([], 0, state.get("locked", {}), {})
         return "active=0 cleared"
 
 
@@ -419,13 +485,14 @@ def stop_host() -> str:
                 pass
         kill_hosts()
         disconnect_insert_ports()
-        save_host_state([], 0)
+        save_host_state([], 0, state.get("locked", {}), {})
         return "active=0 stopped"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--set", nargs=2, metavar=("INDEX", "ENABLED"))
+    parser.add_argument("--lock", nargs=2, metavar=("INDEX", "ENABLED"))
     parser.add_argument("--clear", action="store_true")
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--status", action="store_true")
@@ -438,12 +505,18 @@ def main() -> int:
         return 0
     if args.status:
         state = load_state()
-        print(f"active={len(state['active'])} indices={state['active']} host={state.get('host_pid', 0)}")
+        locked = sorted(int(index) for index in state.get("locked", {}).keys())
+        print(f"active={len(state['active'])} indices={state['active']} locked={locked} host={state.get('host_pid', 0)}")
         return 0
     if args.set:
         index = max(1, min(int(args.set[0]), len(FX_NAMES)))
         enabled = int(args.set[1]) > 0
         print(set_fx(index, enabled))
+        return 0
+    if args.lock:
+        index = max(1, min(int(args.lock[0]), len(FX_NAMES)))
+        enabled = int(args.lock[1]) > 0
+        print(lock_fx(index, enabled))
         return 0
     parser.print_help()
     return 2

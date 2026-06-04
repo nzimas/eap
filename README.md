@@ -52,6 +52,8 @@ On the Scales / Root Note page, engine row 4 now maps left to right as: Any, Pla
 
 The CC 93 button toggles a global Airwindows grid FX page. Row 1 mirrors the scene slots: active scenes are lit and selected scenes glow brighter, allowing the Airwindows chain to target specific scenes. The usable effects are compacted left-to-right from row 2, currently covering 30 selected Airwindows effects; up to three can be active at once. Activating a fourth effect drops the oldest active effect, and each activation randomizes that plugin's parameters.
 
+Long-pressing an Airwindows FX pad locks its current/randomized parameter state. Locked pads flicker red and remain red while locked; short presses still toggle the effect on and off, but re-enabling a locked effect recalls the saved parameter seed until the pad is long-pressed again.
+
 Use `eap-install-airwindows` on the Pi to build the exact Airwindows wrappers and persistent JACK host. The grid FX run as an external insert only while active: SuperCollider sends the scene mix out on outputs 3/4, the active Airwindows chain returns on inputs 1/2, and the processed signal enters EAP immediately before the master reverb/dynamics stage.
 
 ## Sound-Type Modifiers
