@@ -952,8 +952,9 @@
 
     ~choosePedalsForLane = { |self, lane|
         var modifier = lane[\soundModifier];
-        var pedalCount = if(lane[\total] >= 5, { 1 }, {
-            if(lane[\total] >= 3, { 1 }, { rrand(1, self[\maxFxPerScene]) });
+        var total = lane[\total] ? 1;
+        var pedalCount = if(total >= 4, { 1 }, {
+            if(total >= 2, { 1 }, { rrand(1, self[\maxFxPerScene]) });
         });
         var pool;
         var chain;
@@ -965,10 +966,10 @@
             { self[\pedalCandidates] }
         );
         chain = Array.fill(pedalCount, { pool.choose });
-        if(modifier == \chaos and: { chain.size < self[\maxFxPerScene] and: { 0.62.coin } }, {
+        if(modifier == \chaos and: { total < 2 } and: { chain.size < self[\maxFxPerScene] and: { 0.62.coin } }, {
             chain = chain ++ [pool.choose];
         });
-        if(modifier == \chaos and: { chain.size < self[\maxFxPerScene] and: { 0.28.coin } }, {
+        if(modifier == \chaos and: { total < 2 } and: { chain.size < self[\maxFxPerScene] and: { 0.28.coin } }, {
             chain = chain ++ [pool.choose];
         });
         chain;
@@ -1987,7 +1988,7 @@
         var total = self[\activeCount].value(self).max(1);
         self[\slots].do({ |lane|
             if(lane.notNil) {
-                if(total > 2 and: { lane[\state] == \active and: { lane[\fx] == \clouds } }) {
+                if(total > 1 and: { lane[\state] == \active and: { lane[\fx] == \clouds } }) {
                     ("EAP lane " ++ (lane[\slot] ? lane[\index] ? "?") ++ " clouds disabled under load").postln;
                     self[\stopLane].value(self, lane, \muted);
                     lane[\fx] = \pedalboard;
@@ -1998,6 +1999,16 @@
                 lane[\amp] = (0.28 / total.sqrt).clip(0.10, 0.26);
                 self[\applyLaneOutput].value(self, lane);
             };
+        });
+        if(self[\masterSynth].notNil, {
+            var wetScale = switch(total,
+                5, { 0.50 },
+                4, { 0.62 },
+                3, { 0.78 },
+                { 1.0 }
+            );
+            var wet = ((self[\reverbValues][0] ? 0.24) * wetScale).clip(0, 0.9);
+            self[\masterSynth].set(\wet, wet);
         });
         self[\syncVcvEngine].value(self);
     };

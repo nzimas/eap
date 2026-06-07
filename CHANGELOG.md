@@ -19,7 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Launchpad scene generation: modifier latch, generate at long-press threshold while held, longer OSC reply wait; chaos modifier on CC 39 (CC 49 retired).
 - SuperCollider scene engine: Subsequence lane sync, expanded chaos stochasticity (rhythm + timbre), master compression bypass on profile 0, drone lane sustain fixes, async Airwindows grid-FX clear on start/stop.
-- JACK profile: empty SuperCollider default inputs, explicit playback outputs, no SC self-routing; consolidated jack override config.
+- JACK profile: period raised to 2048 frames; SuperCollider block size matched; `memoryLocking` enabled (`scsynth -L`); empty default inputs, explicit playback outputs, no SC self-routing.
+- Load governor: Clouds FX disabled with 2+ active lanes, single pedal per lane under load, master reverb wet scaled down as lane count grows.
 - VCV: compatibility reindexing, seed patch install, no synthetic fallback when cache has no compatible patch; deploy enables subsequence install/restart.
 - README: link to user guide; updated modifier table and VCV workflow.
 
@@ -27,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Dead scene slot pads: removed `eap-airwindows-grid-fx.sh` infinite exec loop; install Python grid-FX helper; fixed `~triggerLane` variable ordering parse error.
 - Launchpad generation ignored when modifier CC released before slot pad release.
-- JACK xrun storms from SuperCollider input self-routing and excessive lane load.
+- JACK xrun storms from SuperCollider input self-routing, page faults, and per-block overload under multiple active lanes.
 
 ### Notes
 

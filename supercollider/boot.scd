@@ -11,12 +11,13 @@ s = Server.default;
 s.options.numInputBusChannels = 4;
 s.options.numOutputBusChannels = 4;
 s.options.sampleRate = 48000;
-s.options.blockSize = 1024;
-s.options.hardwareBufferSize = 1024;
+s.options.blockSize = 2048;
+s.options.hardwareBufferSize = 2048;
 s.options.memSize = 262144;
 s.options.numWireBufs = 256;
 s.options.maxNodes = 8192;
 s.options.maxSynthDefs = 2048;
+s.options.memoryLocking = true;
 s.latency = 0.1;
 
 s.waitForBoot({
