@@ -19,6 +19,26 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+import importlib.util
+
+def _lib_path() -> Path:
+    candidates = [
+        Path(__file__).with_name("eap-vcv-lib.py"),
+        Path("/opt/electroacoustic-playground/deployment/scripts/eap-vcv-lib.py"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise RuntimeError("could not find eap-vcv-lib.py")
+
+
+_LIB_PATH = _lib_path()
+_spec = importlib.util.spec_from_file_location("eap_vcv_lib", _LIB_PATH)
+if _spec is None or _spec.loader is None:
+    raise RuntimeError(f"could not load {_LIB_PATH}")
+_lib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_lib)
+
 
 STATE_DIR = Path(os.environ.get("EAP_VCV_STATE_DIR", "/home/we/.local/share/eap-vcv"))
 CACHE_DIR = Path(os.environ.get("EAP_VCV_PATCH_CACHE", "/opt/electroacoustic-playground/vcv/patch-cache"))
@@ -26,6 +46,15 @@ API_BASE = os.environ.get("EAP_PATCHSTORAGE_API", "https://patchstorage.com/api/
 USER_AGENT = os.environ.get("EAP_PATCHSTORAGE_USER_AGENT", "ElectroacousticPlayground/0.1")
 PLATFORM_SLUG = os.environ.get("EAP_PATCHSTORAGE_VCV_PLATFORM", "vcv-rack")
 DEFAULT_SEARCH = os.environ.get("EAP_PATCHSTORAGE_VCV_SEARCH", "VCV Rack")
+
+
+def load_json(path: Path, fallback: Any) -> Any:
+    if not path.exists():
+        return fallback
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return fallback
 
 
 def request_json(url: str) -> Any:
@@ -141,9 +170,22 @@ def module_dependencies(patch_json: dict[str, Any] | None) -> list[dict[str, str
     return sorted(deps.values(), key=lambda item: (item["plugin"], item["model"]))
 
 
-def has_io_modules(deps: list[dict[str, str]]) -> bool:
-    labels = " ".join((dep["plugin"] + " " + dep["model"]).lower() for dep in deps)
-    return ("audio" in labels or "output" in labels) and "midi" in labels
+def installed_plugins(cache_dir: Path) -> set[str]:
+    status_path = cache_dir / "modules.json"
+    installed = set(_lib.BUILT_IN_PLUGINS)
+    if status_path.exists():
+        try:
+            payload = json.loads(status_path.read_text(encoding="utf-8"))
+            plugins = payload.get("plugins", {})
+            if isinstance(plugins, dict):
+                installed.update(
+                    str(name)
+                    for name, info in plugins.items()
+                    if isinstance(info, dict) and info.get("status") == "installed"
+                )
+        except json.JSONDecodeError:
+            pass
+    return installed
 
 
 def profile_tags(patch: dict[str, Any], deps: list[dict[str, str]]) -> list[str]:
@@ -172,10 +214,40 @@ def main() -> int:
     parser.add_argument("--platform", default=PLATFORM_SLUG)
     parser.add_argument("--search", default=DEFAULT_SEARCH)
     parser.add_argument("--cache-dir", default=str(CACHE_DIR))
+    parser.add_argument("--reindex", action="store_true", help="Recompute compatibility flags for cached patches.")
     args = parser.parse_args()
 
     cache_dir = Path(args.cache_dir)
+    if args.reindex:
+        manifest_path = cache_dir / "manifest.json"
+        manifest = load_json(manifest_path, {"patches": []})
+        installed = installed_plugins(cache_dir)
+        for entry in manifest.get("patches", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            path = Path(str(entry.get("file") or ""))
+            if not path.exists():
+                entry["compatible"] = False
+                entry["compat_reason"] = "missing_file"
+                continue
+            patch_json = extract_patch_json(path)
+            deps = module_dependencies(patch_json)
+            entry["dependencies"] = deps
+            info = _lib.analyze_patch(patch_json, installed) if isinstance(patch_json, dict) else {"compatible": False, "reason": "unreadable"}
+            entry["has_io"] = bool(info.get("has_audio"))
+            entry["compatible"] = bool(info.get("compatible"))
+            entry["compat_reason"] = info.get("reason", "unreadable")
+            print(
+                f"reindex id={entry.get('id')} compatible={entry['compatible']} "
+                f"reason={entry.get('compat_reason')} title={entry.get('title')!r}"
+            )
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        compatible = sum(1 for entry in manifest.get("patches", []) if entry.get("compatible"))
+        print(f"vcv patch cache={cache_dir} compatible={compatible} total={len(manifest.get('patches', []))}")
+        return 0
+
     files_dir = cache_dir / "files"
+    installed = installed_plugins(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     manifest_path = cache_dir / "manifest.json"
@@ -231,6 +303,11 @@ def main() -> int:
                     continue
                 patch_json = extract_patch_json(dest)
                 deps = module_dependencies(patch_json)
+                info = (
+                    _lib.analyze_patch(patch_json, installed)
+                    if isinstance(patch_json, dict)
+                    else {"compatible": False, "reason": "unreadable", "has_audio": False}
+                )
                 entry = {
                     "id": pid,
                     "title": patch.get("title") or patch.get("slug") or pid,
@@ -240,13 +317,18 @@ def main() -> int:
                     "file": str(dest),
                     "profiles": profile_tags(patch, deps),
                     "dependencies": deps,
-                    "has_io": has_io_modules(deps),
+                    "has_io": bool(info.get("has_audio")),
+                    "compatible": bool(info.get("compatible")),
+                    "compat_reason": info.get("reason", "unreadable"),
                     "downloaded_at": time.time(),
                 }
                 manifest.setdefault("patches", []).append(entry)
                 seen.add(pid)
                 added += 1
-                print(f"cached patch={pid} profiles={','.join(entry['profiles'])} deps={len(deps)} io={entry['has_io']}")
+                print(
+                    f"cached patch={pid} profiles={','.join(entry['profiles'])} "
+                    f"deps={len(deps)} compatible={entry['compatible']} reason={entry['compat_reason']}"
+                )
                 break
             time.sleep(max(0.0, args.sleep))
 

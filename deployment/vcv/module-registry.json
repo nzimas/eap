@@ -1,0 +1,6 @@
+{
+  "Fundamental": "https://github.com/VCVRack/Fundamental.git",
+  "DanTModules": "https://github.com/danRabada/DanTModules.git",
+  "AudibleInstruments": "https://github.com/pichenettes/eurorack.git",
+  "Bogaudio": "https://github.com/bogaudio/BogaudioModules.git"
+}

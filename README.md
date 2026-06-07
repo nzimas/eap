@@ -2,12 +2,14 @@
 
 Electroacoustic Playground is a bespoke Raspberry Pi/Fates instrument stack built around SuperCollider, a Launchpad Mini Mk3 control layer, Mutable Instruments-inspired engines, Passersby/Molly sound material, pedalboard effects, and a shared master reverb.
 
+**User documentation:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — Launchpad pages, parameter positions, gestures, sessions, and Pi operation.
+
 The current stack includes:
 
 - SuperCollider scene-slot engine with up to eight Launchpad-addressable scene slots.
 - Random scene generation from Plaits, Rings, Passersby, Molly, fold-based material, optional external Dexed, optional realtime Vital/Vitalium, and optional headless VCV Rack.
 - Per-scene pedalboard or Clouds-style effects, bounded for CPU safety.
-- Launchpad Mini Mk3 controller daemon with scene toggles, long-press regeneration, sound-type modifiers (CC 19/29/39/49), LED states, and auxiliary pages for reverb, tuning, master dynamics, and sessions.
+- Launchpad Mini Mk3 controller daemon with scene toggles, long-press regeneration, sound-type modifiers (CC 19/29/39), LED states, and auxiliary pages for reverb, tuning, master dynamics, and sessions.
 - Systemd units and deployment helpers for the Fates/Pi environment.
 
 Primary runtime files:
@@ -52,7 +54,7 @@ On the Scales / Root Note page, engine row 4 maps left to right as: Any, Plaits,
 
 VCV Rack is treated as an optional realtime external JACK/MIDI instrument. EAP starts Rack 2 in headless mode with a cached `.vcv` patch, lightly mutates compatible patch parameters, routes Rack audio back into SuperCollider inputs 3/4, and sends live MIDI notes from the same scale-aware sequencer used by the other engines.
 
-Use `eap-install-vcv-rack` on the Pi to build Rack for ARM64, install Fundamental, and create `/usr/local/bin/eap-rack`. Use `eap-vcv-sync-patches` to cache Patchstorage VCV Rack patches and `eap-vcv-modules` to attempt installation of third-party module dependencies. VCV is gated behind `EAP_ENABLE_VCV=1` until the Pi/JACK profile is verified stable.
+Use `eap-install-vcv-rack` on the Pi to build Rack for ARM64, install Fundamental, and create `/usr/local/bin/eap-rack`. Use `eap-vcv-install-seeds` to install the bundled Core/Fundamental MIDI performance patch, `eap-vcv-sync-patches` to cache Patchstorage patches, and `eap-vcv-sync-patches --reindex` to refresh compatibility flags. Only patches with installed modules and audio/MIDI capability are used; EAP does not synthesize fallback patches when the cache has no compatible entry. Runtime launch is gated behind `EAP_ENABLE_VCV=1` (enabled by the installer default).
 
 ## Airwindows Grid FX
 
@@ -70,7 +72,6 @@ Hold one of the four Up buttons while toggling or long-pressing a bottom-row sce
 |----|-----------|
 | 19 | Percussive — short envelopes, dense rhythms, punchy materials |
 | 29 | Drone / texture — low register, sparse events, clouds and sustain |
-| 39 | Harmonic pads — evolving chords, mid register, lush modulation |
-| 49 | Chaos — noisy FM, volatile timing, aggressive FX |
+| 39 | Chaos — noisy FM, volatile timing, aggressive FX |
 
-Modifier buttons are lit orange; the held button highlights white. With no modifier held, scene generation uses the default random profile. OSC `/eap/slot` accepts an optional third integer argument (1–4) matching the table above.
+Modifier buttons are lit orange; the held button highlights white. With no modifier held, scene generation uses the default random profile. OSC `/eap/slot` accepts an optional third integer argument (1–3) matching the table above.

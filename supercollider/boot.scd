@@ -3,11 +3,15 @@
 
 "Electroacoustic Playground: loading boot.scd".postln;
 
+// Wire only main outs to playback; never autoconnect SC ports to each other.
+"SC_JACK_DEFAULT_INPUTS".setenv("");
+"SC_JACK_DEFAULT_OUTPUTS".setenv("system:playback_1,system:playback_2");
+
 s = Server.default;
 s.options.numInputBusChannels = 4;
 s.options.numOutputBusChannels = 4;
 s.options.sampleRate = 48000;
-s.options.blockSize = 512;
+s.options.blockSize = 1024;
 s.options.hardwareBufferSize = 1024;
 s.options.memSize = 262144;
 s.options.numWireBufs = 256;
@@ -23,58 +27,19 @@ s.waitForBoot({
 
     ~eapScenes[\start].value(~eapScenes);
 
-    ~eapConnectJackOut = {
-        var ok = "/usr/local/bin/eap-connect-sc-jack 8 0.25".unixCmdGetStdOut.contains("connected");
-        if(ok.not, {
-            [
-                "jack_disconnect SuperCollider:out_1 system:playback_1",
-                "jack_disconnect SuperCollider:out_1 system:playback_2",
-                "jack_disconnect SuperCollider:out_1 SuperCollider:in_1",
-                "jack_disconnect SuperCollider:out_1 SuperCollider:in_2",
-                "jack_disconnect SuperCollider:out_1 SuperCollider:in_3",
-                "jack_disconnect SuperCollider:out_1 SuperCollider:in_4",
-                "jack_disconnect SuperCollider:out_2 system:playback_1",
-                "jack_disconnect SuperCollider:out_2 system:playback_2",
-                "jack_disconnect SuperCollider:out_2 SuperCollider:in_1",
-                "jack_disconnect SuperCollider:out_2 SuperCollider:in_2",
-                "jack_disconnect SuperCollider:out_2 SuperCollider:in_3",
-                "jack_disconnect SuperCollider:out_2 SuperCollider:in_4",
-                "jack_disconnect SuperCollider:out_3 system:playback_1",
-                "jack_disconnect SuperCollider:out_3 system:playback_2",
-                "jack_disconnect SuperCollider:out_3 SuperCollider:in_1",
-                "jack_disconnect SuperCollider:out_3 SuperCollider:in_2",
-                "jack_disconnect SuperCollider:out_3 SuperCollider:in_3",
-                "jack_disconnect SuperCollider:out_3 SuperCollider:in_4",
-                "jack_disconnect SuperCollider:out_4 system:playback_1",
-                "jack_disconnect SuperCollider:out_4 system:playback_2",
-                "jack_disconnect SuperCollider:out_4 SuperCollider:in_1",
-                "jack_disconnect SuperCollider:out_4 SuperCollider:in_2",
-                "jack_disconnect SuperCollider:out_4 SuperCollider:in_3",
-                "jack_disconnect SuperCollider:out_4 SuperCollider:in_4",
-                "jack_connect SuperCollider:out_1 system:playback_1",
-                "jack_connect SuperCollider:out_2 system:playback_2"
-            ].do({ |cmd| cmd.unixCmdGetStdOut; });
-            "EAP JACK outputs connected to system playback (fallback)".postln;
-        });
-        ok;
-    };
-    Routine({
-        [1.0, 3.0, 8.0, 20.0].do({ |delay|
-            delay.wait;
-            if(~eapConnectJackOut.value.not, {
-                "EAP JACK connect retry at " ++ delay ++ "s".postln;
-            });
-        });
-    }).play(SystemClock);
+    OSCdef(\eapSeqEvent, { |msg|
+        ~eapScenes[\onSubsequenceEvent].value(~eapScenes, msg);
+    }, '/eap/seq/event');
 
-    OSCdef(\eapRandomScenes, { |msg|
+    OSCdef(\eapRandomScenes, { |msg, time, addr|
         var count = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
         var modifier = if(msg.size > 2, { ~eapScenes[\modifierFromCode].value(~eapScenes, msg[2]) }, { nil });
         ~eapScenes[\seed].value(~eapScenes, count, modifier);
         ("EAP manual random scene set: " ++ count ++ " modifier=" ++ (modifier ? \default)).postln;
+        ~eapScenes[\replySlotStates].value(~eapScenes, addr);
     }, '/eap/scenes');
 
-    OSCdef(\eapSceneSlot, { |msg|
+    OSCdef(\eapSceneSlot, { |msg, time, addr|
         var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
         var action = (msg[2] ? 0).asInteger;
         var modifier = if(msg.size > 3, { ~eapScenes[\modifierFromCode].value(~eapScenes, msg[3]) }, { nil });
@@ -86,11 +51,17 @@ s.waitForBoot({
             state = ~eapScenes[\toggleSlot].value(~eapScenes, slot, modifier);
             ("EAP slot OSC toggle: " ++ slot ++ " modifier=" ++ (modifier ? \default) ++ " state=" ++ state).postln;
         });
+        ~eapScenes[\replySlotStates].value(~eapScenes, addr);
     }, '/eap/slot');
 
-    OSCdef(\eapClear, { |msg|
+    OSCdef(\eapSlotsQuery, { |msg, time, addr|
+        ~eapScenes[\replySlotStates].value(~eapScenes, addr);
+    }, '/eap/slots/query');
+
+    OSCdef(\eapClear, { |msg, time, addr|
         ~eapScenes[\clear].value(~eapScenes);
         "EAP all scene lanes cleared".postln;
+        ~eapScenes[\replySlotStates].value(~eapScenes, addr);
     }, '/eap/clear', nil);
 
     OSCdef(\eapMasterReverb, { |msg|
@@ -192,6 +163,16 @@ s.waitForBoot({
         var result = ~eapScenes[\refreshVcv].value(~eapScenes);
         ("EAP VCV rescan result=" ++ result).postln;
     }, '/eap/vcv/rescan');
+
+    OSCdef(\eapVcvTest, { |msg|
+        ~eapScenes[\loadVcvPatch].value(~eapScenes, 99, 1, \percussive);
+        ~eapScenes[\refreshVcv].value(~eapScenes);
+        if(~eapScenes[\externalInputSynth].notNil, {
+            ~eapScenes[\externalInputSynth].set(\amp, 0.9, \fadeTime, 0.02);
+        });
+        ~eapScenes[\sendVcvNote].value(~eapScenes, 60, 110, 1.2);
+        "EAP VCV test note sent".postln;
+    }, '/eap/vcv/test');
 
     OSCdef(\eapTest, { |msg|
         var freq = (msg[1] ? 440).asFloat.clip(20, 4000);

@@ -1,20 +1,35 @@
 #!/usr/bin/env python3
-"""Choose, gently mutate, and start a headless VCV Rack patch for EAP."""
+"""Choose, prepare, mutate, and start a cached VCV Rack patch for EAP."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import random
-import shutil
 import subprocess
-import tarfile
-import tempfile
-import zipfile
+import sys
 from pathlib import Path
 from typing import Any
 
+def _lib_path() -> Path:
+    candidates = [
+        Path(__file__).with_name("eap-vcv-lib.py"),
+        Path("/opt/electroacoustic-playground/deployment/scripts/eap-vcv-lib.py"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise RuntimeError("could not find eap-vcv-lib.py")
+
+
+_LIB_PATH = _lib_path()
+_spec = importlib.util.spec_from_file_location("eap_vcv_lib", _LIB_PATH)
+if _spec is None or _spec.loader is None:
+    raise RuntimeError(f"could not load {_LIB_PATH}")
+_lib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_lib)
 
 STATE_DIR = Path(os.environ.get("EAP_VCV_STATE_DIR", "/home/we/.local/share/eap-vcv"))
 CACHE_DIR = Path(os.environ.get("EAP_VCV_PATCH_CACHE", "/opt/electroacoustic-playground/vcv/patch-cache"))
@@ -37,7 +52,7 @@ def load_json(path: Path, fallback: Any) -> Any:
 def installed_modules() -> set[str]:
     status = load_json(MODULE_STATUS_PATH, {"plugins": {}})
     plugins = status.get("plugins", {})
-    installed = {"Core", "Fundamental", "VCV"}
+    installed: set[str] = set()
     if isinstance(plugins, dict):
         installed.update(
             str(name)
@@ -52,6 +67,8 @@ def extract_patch_json(path: Path) -> dict[str, Any]:
     if data.lstrip().startswith(b"{"):
         return json.loads(data.decode("utf-8"))
     if path.suffix.lower() == ".zip":
+        import zipfile
+
         with zipfile.ZipFile(path) as archive:
             for name in archive.namelist():
                 if name.endswith(".vcv") or name.endswith("patch.json") or name.endswith(".json"):
@@ -59,18 +76,20 @@ def extract_patch_json(path: Path) -> dict[str, Any]:
                         nested = handle.read()
                     if nested.lstrip().startswith(b"{"):
                         return json.loads(nested.decode("utf-8"))
-                    with tempfile.NamedTemporaryFile(suffix=".vcv") as tmp:
-                        tmp.write(nested)
-                        tmp.flush()
-                        return extract_patch_json(Path(tmp.name))
         raise RuntimeError(f"zip archive has no VCV patch JSON: {path}")
+    import shutil
+    import tarfile
+    import tempfile
+
     if shutil.which("zstd"):
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(["tar", "--zstd", "-xf", str(path), "-C", tmp], check=True)
             patch_json = next(Path(tmp).rglob("patch.json"), None)
             if patch_json is None:
-                raise RuntimeError(f"patch archive has no patch.json: {path}")
-            return json.loads(patch_json.read_text(encoding="utf-8"))
+                patch_json = next(Path(tmp).rglob("*.vcv"), None)
+            if patch_json is None:
+                raise RuntimeError(f"patch archive has no patch JSON: {path}")
+            return extract_patch_json(patch_json)
     if tarfile.is_tarfile(path):
         with tarfile.open(path) as archive:
             member = next((m for m in archive.getmembers() if m.name.endswith("patch.json")), None)
@@ -83,131 +102,35 @@ def extract_patch_json(path: Path) -> dict[str, Any]:
     raise RuntimeError(f"unsupported VCV patch archive: {path}")
 
 
-def dependencies_available(entry: dict[str, Any], installed: set[str]) -> bool:
-    if not entry.get("has_io", False):
-        return False
-    for dep in entry.get("dependencies", []) or []:
-        plugin = str(dep.get("plugin") or "")
-        if plugin and plugin not in installed:
-            return False
-    return True
-
-
 def profile_matches(entry: dict[str, Any], profile: str) -> bool:
     profiles = set(entry.get("profiles", []) or [])
     return profile in profiles or "default" in profiles or not profiles
 
 
-def choose_patch(rng: random.Random, profile: str, manifest: dict[str, Any]) -> dict[str, Any]:
-    installed = installed_modules()
+def choose_patch(rng: random.Random, profile: str, manifest: dict[str, Any], installed: set[str]) -> dict[str, Any]:
     patches = [
-        patch for patch in manifest.get("patches", []) or []
-        if dependencies_available(patch, installed)
+        patch
+        for patch in manifest.get("patches", []) or []
+        if isinstance(patch, dict) and patch.get("compatible") is not False
     ]
-    preferred = [patch for patch in patches if profile_matches(patch, profile)]
+    verified: list[dict[str, Any]] = []
+    for entry in patches:
+        path = Path(str(entry.get("file") or ""))
+        if not path.exists():
+            continue
+        try:
+            patch = extract_patch_json(path)
+        except Exception:
+            continue
+        info = _lib.analyze_patch(patch, installed)
+        if info["compatible"]:
+            verified.append(entry)
+    preferred = [patch for patch in verified if profile_matches(patch, profile)]
     if preferred:
         return rng.choice(preferred)
-    if patches:
-        return rng.choice(patches)
+    if verified:
+        return rng.choice(verified)
     raise RuntimeError("no compatible VCV Rack patches in cache")
-
-
-def fallback_patch(profile: str) -> dict[str, Any]:
-    """Small Core/Fundamental patch used only until compatible cached patches exist."""
-    # Module ids are fixed for readable, deterministic cable definitions.
-    midi_id = 1
-    vco_id = 2
-    adsr_id = 3
-    vca_id = 4
-    audio_id = 5
-    base_release = 0.18 if profile == "percussive" else 0.45
-    sustain = 0.25 if profile == "percussive" else 0.65
-    freq = -12.0 if profile == "drone" else 0.0
-    return {
-        "version": "2.6.6",
-        "zoom": 1.0,
-        "gridOffset": [0.0, 0.0],
-        "modules": [
-            {
-                "id": midi_id,
-                "plugin": "Core",
-                "model": "MIDIToCVInterface",
-                "version": "2.6.6",
-                "params": [],
-                "data": {"midi": {}},
-                "pos": [0, 0],
-            },
-            {
-                "id": vco_id,
-                "plugin": "Fundamental",
-                "model": "VCO",
-                "version": "2.6.4",
-                "params": [
-                    {"id": 1, "value": 1.0},
-                    {"id": 2, "value": freq},
-                    {"id": 4, "value": 0.0},
-                    {"id": 5, "value": 0.5},
-                    {"id": 6, "value": 0.0},
-                    {"id": 7, "value": 0.0},
-                ],
-                "pos": [15, 0],
-            },
-            {
-                "id": adsr_id,
-                "plugin": "Fundamental",
-                "model": "ADSR",
-                "version": "2.6.4",
-                "params": [
-                    {"id": 0, "value": 0.02},
-                    {"id": 1, "value": 0.12},
-                    {"id": 2, "value": sustain},
-                    {"id": 3, "value": base_release},
-                    {"id": 4, "value": 0.0},
-                    {"id": 5, "value": 0.0},
-                    {"id": 6, "value": 0.0},
-                    {"id": 7, "value": 0.0},
-                    {"id": 8, "value": 0.0},
-                ],
-                "pos": [30, 0],
-            },
-            {
-                "id": vca_id,
-                "plugin": "Fundamental",
-                "model": "VCA-1",
-                "version": "2.6.4",
-                "params": [{"id": 0, "value": 0.8}],
-                "pos": [45, 0],
-            },
-            {
-                "id": audio_id,
-                "plugin": "Core",
-                "model": "AudioInterface2",
-                "version": "2.6.6",
-                "params": [{"id": 0, "value": 1.0}],
-                "data": {
-                    "audio": {
-                        "driver": 4,
-                        "deviceName": "system",
-                        "sampleRate": 48000.0,
-                        "blockSize": 256,
-                        "inputOffset": 0,
-                        "outputOffset": 0,
-                    },
-                    "dcFilter": True,
-                },
-                "pos": [60, 0],
-            },
-        ],
-        "cables": [
-            {"id": 1, "outputModuleId": midi_id, "outputId": 0, "inputModuleId": vco_id, "inputId": 0, "color": "#0986ad", "inputPlugOrder": 1, "outputPlugOrder": 2},
-            {"id": 2, "outputModuleId": midi_id, "outputId": 1, "inputModuleId": adsr_id, "inputId": 4, "color": "#c9b70e", "inputPlugOrder": 3, "outputPlugOrder": 4},
-            {"id": 3, "outputModuleId": vco_id, "outputId": 2, "inputModuleId": vca_id, "inputId": 1, "color": "#f3374b", "inputPlugOrder": 5, "outputPlugOrder": 6},
-            {"id": 4, "outputModuleId": adsr_id, "outputId": 0, "inputModuleId": vca_id, "inputId": 0, "color": "#8b4ade", "inputPlugOrder": 7, "outputPlugOrder": 8},
-            {"id": 5, "outputModuleId": vca_id, "outputId": 0, "inputModuleId": audio_id, "inputId": 0, "color": "#f3374b", "inputPlugOrder": 9, "outputPlugOrder": 10},
-            {"id": 6, "outputModuleId": vca_id, "outputId": 0, "inputModuleId": audio_id, "inputId": 1, "color": "#f3374b", "inputPlugOrder": 11, "outputPlugOrder": 12},
-        ],
-        "masterModuleId": audio_id,
-    }
 
 
 def mutate_value(rng: random.Random, value: float, amount: float, profile: str) -> float:
@@ -247,11 +170,27 @@ def mutate_patch(patch: dict[str, Any], rng: random.Random, profile: str, amount
 def write_runtime_patch(patch: dict[str, Any], slot: int) -> Path:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     path = STATE_DIR / f"slot-{slot}.vcv"
-    # Rack patch files are plain JSON. The zstd tar format is used for .vcvplugin bundles.
     encoded = json.dumps(patch, separators=(",", ":"))
     path.write_text(encoded, encoding="utf-8")
     (STATE_DIR / "current.vcv").write_text(encoded, encoding="utf-8")
     return path
+
+
+def count_compatible(manifest: dict[str, Any], installed: set[str]) -> int:
+    count = 0
+    for entry in manifest.get("patches", []) or []:
+        if not isinstance(entry, dict) or entry.get("compatible") is False:
+            continue
+        path = Path(str(entry.get("file") or ""))
+        if not path.exists():
+            continue
+        try:
+            patch = extract_patch_json(path)
+        except Exception:
+            continue
+        if _lib.analyze_patch(patch, installed)["compatible"]:
+            count += 1
+    return count
 
 
 def main() -> int:
@@ -262,16 +201,24 @@ def main() -> int:
     parser.add_argument("--mutate", type=float, default=0.16)
     parser.add_argument("--cache-dir", default=str(CACHE_DIR))
     parser.add_argument("--no-start", action="store_true")
+    parser.add_argument("--check", action="store_true", help="Print compatible patch count and exit.")
     args = parser.parse_args()
 
-    rng = random.Random(args.seed) if args.seed is not None else random.SystemRandom()
+    installed = installed_modules()
     manifest = load_json(Path(args.cache_dir) / "manifest.json", {"patches": []})
-    try:
-        entry = choose_patch(rng, args.profile, manifest)
-        patch = extract_patch_json(Path(entry["file"]))
-    except RuntimeError:
-        entry = {"title": "EAP Fundamental fallback"}
-        patch = fallback_patch(args.profile)
+    if args.check:
+        total = count_compatible(manifest, installed)
+        print(f"vcv compatible_patches={total}")
+        return 0 if total > 0 else 2
+
+    rng = random.Random(args.seed) if args.seed is not None else random.SystemRandom()
+    entry = choose_patch(rng, args.profile, manifest, installed)
+    patch = extract_patch_json(Path(entry["file"]))
+    info = _lib.analyze_patch(patch, installed)
+    if not info["compatible"]:
+        print(f"vcv error chosen patch is not compatible: {info['reason']}", file=sys.stderr)
+        return 2
+    patch, prep = _lib.prepare_patch(patch)
     changed = mutate_patch(patch, rng, args.profile, clamp(args.mutate, 0.0, 1.0))
     runtime = write_runtime_patch(patch, max(1, min(args.slot, 8)))
 
@@ -279,7 +226,7 @@ def main() -> int:
         subprocess.run(["/usr/local/bin/eap-start-vcv", str(runtime)], check=True)
     print(
         f"vcv patch file={runtime} title={entry.get('title')!r} "
-        f"profile={args.profile} mutated_params={changed}"
+        f"profile={args.profile} prepared={prep} mutated_params={changed}"
     )
     return 0
 

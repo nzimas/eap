@@ -229,7 +229,14 @@ chmod 0755 /usr/local/bin/eap-rack
 
 mkdir -p /opt/electroacoustic-playground/vcv/patch-cache
 cat >/etc/default/eap-vcv <<'EOF'
-# Set to 1 after the Pi can tolerate the extra VCV Rack CPU load.
 EAP_ENABLE_VCV=0
+EAP_VCV_MIDI_DEVICE=14:0
 EOF
+
+if [[ -x /usr/local/bin/eap-vcv-install-seeds ]]; then
+  /usr/local/bin/eap-vcv-install-seeds || true
+fi
+if command -v /usr/local/bin/eap-vcv-sync-patches >/dev/null 2>&1; then
+  /usr/local/bin/eap-vcv-sync-patches --reindex || true
+fi
 echo "VCV Rack installed: /usr/local/bin/eap-rack"

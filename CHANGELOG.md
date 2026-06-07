@@ -6,26 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## 2026-06-07
+
 ### Added
 
-- VCV Rack as an optional realtime external engine (Launchpad engine row 5, SuperCollider `\vcv` material and note routing).
-- Patchstorage cache tooling (`eap-vcv-sync-patches.py`) with per-patch metadata, profiles, and dependency lists.
-- VCV patch mutation and runtime loader (`eap-vcv-patch.py`) with modifier-aware parameter tweaks and a Core/Fundamental fallback patch when no cached patch is compatible.
-- VCV module resolver (`eap-vcv-modules.py`) to attempt builds of third-party Rack plugins referenced by cached patches.
-- Pi installer and services: `eap-install-vcv-rack.sh`, `eap-start-vcv.sh`, `eap-connect-vcv-jack.sh`, `eap-vcv.service`, `eap-vcv-connect.service`.
-- README section for VCV Rack installation, patch sync, and enablement via `EAP_ENABLE_VCV=1`.
+- Subsequence rhythm bridge (`eap-subsequence-bridge.py`, `eap_subsequence_lanes.py`, `eap-subsequence.service`) with algorithmic percussive and chaos profile builders (euclidean variants, CA, Lorenz, de Bruijn, reaction–diffusion, and related structures — no genre-named profiles).
+- Launchpad slot-state OSC feedback (`/eap/slots/query`, `/eap/slots/state`) and startup wait until SuperCollider responds.
+- User guide: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md).
+- VCV Rack optional engine: Patchstorage cache (`eap-vcv-sync-patches.py`), patch loader/mutation (`eap-vcv-patch.py`), module resolver (`eap-vcv-modules.py`), seed installer, bundled patch cache, Pi services (`eap-vcv.service`, `eap-vcv-connect.service`), and SuperCollider `\vcv` material/routing.
 
 ### Changed
 
-- SuperCollider scene engine: VCV availability, patch load/rescan, MIDI note sending, and adaptive lane metadata for VCV patches.
-- Launchpad tuning page: engine selection extended for VCV; OSC `/eap/engine` and `/eap/vcv/rescan` bounds updated.
-- Deploy and audio-stack restart scripts: install/stop VCV units; console status no longer hard-depends on optional engine services.
-- `bin/eap`: helpers for VCV patch sync and module resolution on the Pi.
+- Launchpad scene generation: modifier latch, generate at long-press threshold while held, longer OSC reply wait; chaos modifier on CC 39 (CC 49 retired).
+- SuperCollider scene engine: Subsequence lane sync, expanded chaos stochasticity (rhythm + timbre), master compression bypass on profile 0, drone lane sustain fixes, async Airwindows grid-FX clear on start/stop.
+- JACK profile: empty SuperCollider default inputs, explicit playback outputs, no SC self-routing; consolidated jack override config.
+- VCV: compatibility reindexing, seed patch install, no synthetic fallback when cache has no compatible patch; deploy enables subsequence install/restart.
+- README: link to user guide; updated modifier table and VCV workflow.
+
+### Fixed
+
+- Dead scene slot pads: removed `eap-airwindows-grid-fx.sh` infinite exec loop; install Python grid-FX helper; fixed `~triggerLane` variable ordering parse error.
+- Launchpad generation ignored when modifier CC released before slot pad release.
+- JACK xrun storms from SuperCollider input self-routing and excessive lane load.
 
 ### Notes
 
-- VCV remains **disabled by default** (`EAP_ENABLE_VCV=0` in `/etc/default/eap-vcv`) until Pi/JACK stability is confirmed under load.
-- Verified on Pi: Rack 2.6.6 Linux ARMv7 builds and runs headless; JACK audio routes to `SuperCollider:in_3/4`. MIDI input wiring for stock `MIDIToCVInterface` still depends on selecting an existing JACK MIDI source.
+- VCV remains **disabled by default** on deploy (`EAP_ENABLE_VCV=0`) until Pi/JACK stability is confirmed under load.
 
 ## 2026-06-04
 

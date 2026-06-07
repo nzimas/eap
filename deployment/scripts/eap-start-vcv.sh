@@ -24,12 +24,17 @@ if [[ ! -f "$patch_file" ]]; then
     exit 3
 fi
 
-if [[ "${EAP_VCV_FOREGROUND:-0}" != "1" ]] && [[ -f "$pid_file" ]]; then
+if pgrep -f "Rack -h " >/dev/null 2>&1; then
+    pkill -f "Rack -h " 2>/dev/null || true
+    sleep 0.5
+fi
+if [[ -f "$pid_file" ]]; then
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
     if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
         kill "$old_pid" 2>/dev/null || true
         sleep 0.5
     fi
+    rm -f "$pid_file"
 fi
 
 export HOME="${HOME:-/home/we}"

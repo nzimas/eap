@@ -24,14 +24,17 @@ MASTER_CC = 89
 GRID_FX_CC = 93
 PERCUSSIVE_CC = 19
 DRONE_CC = 29
-HARMONIC_CC = 39
-CHAOS_CC = 49
-MODIFIER_CCS = (PERCUSSIVE_CC, DRONE_CC, HARMONIC_CC, CHAOS_CC)
+CHAOS_CC = 39
+MODIFIER_CCS = (PERCUSSIVE_CC, DRONE_CC, CHAOS_CC)
+RETIRED_MODIFIER_CCS = (49,)
 LONG_PRESS_SECONDS = float(os.environ.get("EAP_LONG_PRESS_SECONDS", "0.65"))
 MIDI_IN = os.environ.get("EAP_LAUNCHPAD_IN", "")
 MIDI_OUT = os.environ.get("EAP_LAUNCHPAD_OUT", "")
 OSC_HOST = os.environ.get("EAP_OSC_HOST", "127.0.0.1")
 OSC_PORT = int(os.environ.get("EAP_OSC_PORT", "57120"))
+OSC_REPLY_PORT = int(os.environ.get("EAP_OSC_REPLY_PORT", "57121"))
+SLOTS_STATE_PATH = b"/eap/slots/state\x00"
+SLOTS_STATE_TAGS = b",iiiiiiii\x00"
 SESSION_INDEX_PATH = os.environ.get(
     "EAP_SESSION_INDEX",
     "/home/we/.local/share/eap-launchpad/sessions.json",
@@ -110,6 +113,8 @@ class Pad:
     note: int
     state: int = STATE_BLANK
     pressed_at: float | None = None
+    modifier_latch: int = 0
+    generation_sent: bool = False
     volume: int = 100
     pan: int = 64
     density: int = 100
@@ -129,11 +134,74 @@ def osc_string(value: str) -> bytes:
     return data + (b"\0" * ((4 - (len(data) % 4)) % 4))
 
 
-def send_slot_osc(slot: int, action: int, modifier: int = 0) -> None:
+def create_osc_socket() -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((OSC_HOST, OSC_REPLY_PORT))
+    sock.setblocking(False)
+    return sock
+
+
+def send_osc_packet(sock: socket.socket, packet: bytes) -> None:
+    sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_slot_osc(sock: socket.socket, slot: int, action: int, modifier: int = 0) -> None:
     packet = osc_string("/eap/slot") + osc_string(",iii")
     packet += struct.pack(">iii", int(slot), int(action), int(modifier))
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+    send_osc_packet(sock, packet)
+
+
+def send_slots_query_osc(sock: socket.socket) -> None:
+    send_osc_packet(sock, osc_string("/eap/slots/query") + osc_string(",") + b"\0\0\0")
+
+
+def parse_slots_state_osc(data: bytes) -> list[int] | None:
+    if SLOTS_STATE_PATH not in data:
+        return None
+    tag_index = data.find(SLOTS_STATE_TAGS)
+    if tag_index < 0:
+        return None
+    offset = tag_index + len(SLOTS_STATE_TAGS)
+    offset = ((offset + 3) // 4) * 4
+    if len(data) < offset + 32:
+        return None
+    return list(struct.unpack(">8i", data[offset : offset + 32]))
+
+
+def apply_slot_states(pads: dict[int, Pad], states: list[int]) -> None:
+    for note, state in zip(BOTTOM_ROW_NOTES, states[: len(BOTTOM_ROW_NOTES)]):
+        if state in (STATE_BLANK, STATE_ACTIVE, STATE_MUTED):
+            pads[note].state = state
+
+
+def drain_slot_replies(osc_sock: socket.socket, pads: dict[int, Pad]) -> bool:
+    updated = False
+    while True:
+        try:
+            data, _ = osc_sock.recvfrom(4096)
+        except BlockingIOError:
+            break
+        states = parse_slots_state_osc(data)
+        if states is None:
+            continue
+        apply_slot_states(pads, states)
+        for pad in pads.values():
+            paint(pad)
+        updated = True
+    return updated
+
+
+def wait_slot_replies(osc_sock: socket.socket, pads: dict[int, Pad], timeout: float = 0.12) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        drain_slot_replies(osc_sock, pads)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        ready, _, _ = select.select([osc_sock], [], [], min(remaining, 0.05))
+        if not ready:
+            continue
 
 
 def send_slot_volume_osc(slot: int, value: int) -> None:
@@ -389,34 +457,112 @@ def parse_event(line: str) -> tuple[str, int] | None:
     return None
 
 
-def handle_release(pad: Pad, held_modifier_cc: int | None) -> None:
+def wait_for_sc_ready(osc_sock: socket.socket, pads: dict[int, Pad], timeout: float = 45.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        send_slots_query_osc(osc_sock)
+        wait_deadline = time.monotonic() + 0.75
+        while time.monotonic() < wait_deadline:
+            if drain_slot_replies(osc_sock, pads):
+                print("eap-launchpad: SuperCollider ready", file=sys.stderr, flush=True)
+                return True
+            remaining = wait_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([osc_sock], [], [], min(remaining, 0.05))
+            if not ready:
+                continue
+        time.sleep(0.4)
+    print("eap-launchpad: SuperCollider not ready for slot queries", file=sys.stderr, flush=True)
+    return False
+
+
+def modifier_for_pad(pad: Pad, held_modifier_cc: int | None) -> int:
+    return pad.modifier_latch or active_modifier_index(held_modifier_cc)
+
+
+def send_slot_generate(
+    pad: Pad,
+    held_modifier_cc: int | None,
+    osc_sock: socket.socket,
+    pads: dict[int, Pad],
+    held_for: float,
+) -> bool:
+    modifier = modifier_for_pad(pad, held_modifier_cc)
+    if modifier == 0:
+        return False
+    slot = slot_for_note(pad.note)
+    print(
+        f"eap-launchpad: generate slot={slot} modifier={modifier} held={held_for:.2f}s",
+        file=sys.stderr,
+        flush=True,
+    )
+    send_slot_osc(osc_sock, slot, 1, modifier)
+    pad.generation_sent = True
+    wait_slot_replies(osc_sock, pads, timeout=0.35)
+    return True
+
+
+def maybe_generate_on_hold(
+    pads: dict[int, Pad],
+    held_modifier_cc: int | None,
+    osc_sock: socket.socket,
+) -> None:
+    modifier = active_modifier_index(held_modifier_cc)
+    if modifier == 0:
+        return
+
+    now = time.monotonic()
+    for pad in pads.values():
+        if pad.pressed_at is None or pad.generation_sent:
+            continue
+        held_for = now - pad.pressed_at
+        if held_for < LONG_PRESS_SECONDS:
+            continue
+        send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for)
+
+
+def latch_modifier_for_held_pads(pads: dict[int, Pad], held_modifier_cc: int | None) -> None:
+    modifier = active_modifier_index(held_modifier_cc)
+    if modifier == 0:
+        return
+    for pad in pads.values():
+        if pad.pressed_at is not None:
+            pad.modifier_latch = modifier
+
+
+def handle_release(
+    pad: Pad,
+    held_modifier_cc: int | None,
+    osc_sock: socket.socket,
+    pads: dict[int, Pad],
+) -> None:
     if pad.pressed_at is None:
         return
 
     held_for = time.monotonic() - pad.pressed_at
     pad.pressed_at = None
-    modifier = active_modifier_index(held_modifier_cc)
+    modifier = modifier_for_pad(pad, held_modifier_cc)
+    pad.modifier_latch = 0
+    slot = slot_for_note(pad.note)
+
+    if pad.generation_sent:
+        pad.generation_sent = False
+        return
 
     if held_for >= LONG_PRESS_SECONDS:
         if modifier == 0:
             flash_modifier_required(pad)
             return
-        send_slot_osc(slot_for_note(pad.note), 1, modifier)
-        pad.state = STATE_ACTIVE
+        send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for)
     elif pad.state == STATE_BLANK:
         if modifier == 0:
             flash_modifier_required(pad)
-            return
-        send_slot_osc(slot_for_note(pad.note), 0, modifier)
-        pad.state = STATE_ACTIVE
-    elif pad.state == STATE_ACTIVE:
-        send_slot_osc(slot_for_note(pad.note), 0, modifier)
-        pad.state = STATE_MUTED
+        # Short tap on blank (even with modifier held) does not create scenes.
     else:
-        send_slot_osc(slot_for_note(pad.note), 0, modifier)
-        pad.state = STATE_ACTIVE
-
-    paint(pad)
+        # Mute / unmute only — never pass modifier on toggle.
+        send_slot_osc(osc_sock, slot, 0, 0)
+        wait_slot_replies(osc_sock, pads)
 
 
 def slot_for_note(note: int) -> int:
@@ -442,6 +588,8 @@ def paint_modifier_leds(held_cc: int | None) -> None:
     for cc in MODIFIER_CCS:
         colour = RGB_MODIFIER_HELD if cc == held_cc else RGB_MODIFIER_IDLE
         send_led(cc, colour)
+    for cc in RETIRED_MODIFIER_CCS:
+        send_led(cc, (0, 0, 0))
 
 
 def paint_scene_page(pads: dict[int, Pad], held_modifier_cc: int | None = None) -> None:
@@ -981,6 +1129,11 @@ def main() -> int:
     grid_fx_locked: set[int] = set()
     grid_fx_pressed: dict[int, float] = {}
     paint_scene_page(pads, held_modifier_cc)
+    osc_sock = create_osc_socket()
+    wait_for_sc_ready(osc_sock, pads)
+    send_slots_query_osc(osc_sock)
+    wait_slot_replies(osc_sock, pads, timeout=1.0)
+    paint_scene_page(pads, held_modifier_cc)
 
     while True:
         proc = subprocess.Popen(
@@ -991,21 +1144,28 @@ def main() -> int:
             bufsize=1,
         )
         assert proc.stdout is not None
+        send_slots_query_osc(osc_sock)
+        wait_slot_replies(osc_sock, pads, timeout=0.5)
         while proc.poll() is None:
-            if mode == "scene" and active_modifier_index(held_modifier_cc) == 0:
-                now = time.monotonic()
-                for held_pad in pads.values():
-                    if (
-                        held_pad.pressed_at is not None
-                        and held_pad.state != STATE_BLANK
-                        and now - held_pad.pressed_at >= LONG_PRESS_SECONDS
-                    ):
-                        performance_slot = slot_for_note(held_pad.note)
-                        performance_scene_note = held_pad.note
-                        performance_interacted = False
-                        mode = "performance"
-                        paint_performance_page(pads, performance_slot)
-                        break
+            if mode == "scene":
+                if active_modifier_index(held_modifier_cc) == 0:
+                    now = time.monotonic()
+                    for held_pad in pads.values():
+                        if (
+                            held_pad.pressed_at is not None
+                            and held_pad.state != STATE_BLANK
+                            and now - held_pad.pressed_at >= LONG_PRESS_SECONDS
+                        ):
+                            performance_slot = slot_for_note(held_pad.note)
+                            performance_scene_note = held_pad.note
+                            performance_interacted = False
+                            mode = "performance"
+                            paint_performance_page(pads, performance_slot)
+                            break
+                else:
+                    maybe_generate_on_hold(pads, held_modifier_cc, osc_sock)
+
+            drain_slot_replies(osc_sock, pads)
 
             ready, _, _ = select.select([proc.stdout], [], [], 0.05)
             if not ready:
@@ -1024,6 +1184,7 @@ def main() -> int:
                 if controller in MODIFIER_CCS:
                     if value > 0:
                         held_modifier_cc = controller
+                        latch_modifier_for_held_pads(pads, held_modifier_cc)
                     elif held_modifier_cc == controller:
                         held_modifier_cc = None
                     if mode == "scene":
@@ -1090,10 +1251,10 @@ def main() -> int:
                     pad = pads.get(note)
                     if pad is not None and pad.pressed_at is not None:
                         held_for = time.monotonic() - pad.pressed_at
-                        pad.pressed_at = None
                         if not performance_interacted and held_for < LONG_PRESS_SECONDS:
-                            send_slot_osc(slot_for_note(pad.note), 0, 0)
-                            pad.state = STATE_MUTED if pad.state == STATE_ACTIVE else STATE_ACTIVE
+                            handle_release(pad, held_modifier_cc, osc_sock, pads)
+                        else:
+                            pad.pressed_at = None
                     mode = "scene"
                     performance_slot = None
                     performance_scene_note = None
@@ -1143,8 +1304,10 @@ def main() -> int:
                 continue
             if kind == "on":
                 pad.pressed_at = time.monotonic()
+                pad.generation_sent = False
+                pad.modifier_latch = active_modifier_index(held_modifier_cc)
             else:
-                handle_release(pad, held_modifier_cc)
+                handle_release(pad, held_modifier_cc, osc_sock, pads)
 
         time.sleep(1.0)
 

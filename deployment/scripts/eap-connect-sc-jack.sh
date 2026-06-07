@@ -9,7 +9,7 @@ if ! command -v jack_connect >/dev/null 2>&1; then
     exit 1
 fi
 
-connect_once() {
+disconnect_sc_self_loops() {
     for out in SuperCollider:out_1 SuperCollider:out_2 SuperCollider:out_3 SuperCollider:out_4; do
         jack_disconnect "$out" system:playback_1 2>/dev/null || true
         jack_disconnect "$out" system:playback_2 2>/dev/null || true
@@ -17,7 +17,17 @@ connect_once() {
         jack_disconnect "$out" SuperCollider:in_2 2>/dev/null || true
         jack_disconnect "$out" SuperCollider:in_3 2>/dev/null || true
         jack_disconnect "$out" SuperCollider:in_4 2>/dev/null || true
+        jack_disconnect "$out" system:capture_1 2>/dev/null || true
+        jack_disconnect "$out" system:capture_2 2>/dev/null || true
     done
+    for inp in SuperCollider:in_1 SuperCollider:in_2 SuperCollider:in_3 SuperCollider:in_4; do
+        jack_disconnect system:capture_1 "$inp" 2>/dev/null || true
+        jack_disconnect system:capture_2 "$inp" 2>/dev/null || true
+    done
+}
+
+connect_once() {
+    disconnect_sc_self_loops
     jack_connect SuperCollider:out_1 system:playback_1 2>/dev/null || true
     jack_connect SuperCollider:out_2 system:playback_2 2>/dev/null || true
 }

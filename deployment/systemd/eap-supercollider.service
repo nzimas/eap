@@ -1,7 +1,8 @@
 [Unit]
 Description=Electroacoustic Playground SuperCollider
-After=eap-jack.service
+After=eap-jack.service eap-subsequence.service
 Requires=eap-jack.service
+Wants=eap-subsequence.service
 
 [Service]
 Type=simple
@@ -10,8 +11,11 @@ Group=audio
 WorkingDirectory=/opt/electroacoustic-playground
 Environment=JACK_NO_AUDIO_RESERVATION=1
 Environment=QT_QPA_PLATFORM=offscreen
-Environment=SC_JACK_DEFAULT_INPUTS=4
-Environment=SC_JACK_DEFAULT_OUTPUTS=4
+# Port-name lists only — never channel counts (e.g. "4" loops SC outs into SC ins).
+Environment=SC_JACK_DEFAULT_INPUTS=
+Environment=SC_JACK_DEFAULT_OUTPUTS=system:playback_1,system:playback_2
+EnvironmentFile=-/etc/default/eap-vcv
+Environment=EAP_VCV_MIDI_DEVICE=14:0
 LimitRTPRIO=95
 LimitMEMLOCK=infinity
 ExecStart=/usr/bin/sclang -D /opt/electroacoustic-playground/supercollider/boot.scd

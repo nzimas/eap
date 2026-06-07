@@ -1,0 +1,23 @@
+[Unit]
+Description=Electroacoustic Playground Subsequence lane sequencer
+After=eap-jack.service
+Before=eap-supercollider.service
+Wants=eap-jack.service
+
+[Service]
+Type=simple
+User=we
+Group=audio
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/we/.local/lib/python3.13/site-packages
+Environment=EAP_SUBSEQUENCE_BPM=90
+Environment=EAP_SUBSEQUENCE_OSC_RECV=57122
+Environment=EAP_SUBSEQUENCE_OSC_SEND=57120
+Environment=EAP_SUBSEQUENCE_OSC_HOST=127.0.0.1
+Environment=EAP_SUBSEQUENCE_MIDI_OUTPUT=EAP-Subsequence-Null
+ExecStart=/usr/bin/python3 /opt/electroacoustic-playground/deployment/scripts/eap-subsequence-bridge.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

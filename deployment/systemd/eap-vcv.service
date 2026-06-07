@@ -11,9 +11,8 @@ Environment=HOME=/home/we
 Environment=XDG_CONFIG_HOME=/home/we/.config
 Environment=XDG_DATA_HOME=/home/we/.local/share
 Environment=JACK_NO_AUDIO_RESERVATION=1
-Environment=EAP_VCV_FOREGROUND=1
 EnvironmentFile=-/etc/default/eap-vcv
-ExecStart=/usr/local/bin/eap-start-vcv
+ExecStart=/usr/local/bin/eap-start-vcv /home/we/.local/share/eap-vcv/current.vcv
 Restart=on-failure
 RestartSec=3
 

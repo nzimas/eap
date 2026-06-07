@@ -17,6 +17,12 @@ MODULE_SRC_DIR = Path(os.environ.get("EAP_VCV_MODULE_SRC", "/opt/vcv-rack-src/mo
 RACK_DIR = Path(os.environ.get("EAP_RACK_SRC", "/opt/vcv-rack-src/Rack"))
 RACK_USER_DIR = Path(os.environ.get("EAP_VCV_USER_DIR", "/home/we/.local/share/eap-vcv/Rack2"))
 MANIFEST_PATH = CACHE_DIR / "modules.json"
+REGISTRY_PATH = Path(
+    os.environ.get(
+        "EAP_VCV_MODULE_REGISTRY",
+        "/opt/electroacoustic-playground/deployment/vcv/module-registry.json",
+    )
+)
 
 DEFAULT_REGISTRY: dict[str, str] = {
     "Fundamental": "https://github.com/VCVRack/Fundamental.git",
@@ -92,7 +98,12 @@ def build_plugin(plugin: str, repo: str, force: bool) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache-dir", default=str(CACHE_DIR))
-    parser.add_argument("--registry", type=Path, default=None, help="JSON map of Rack plugin slug/name to git repo.")
+    parser.add_argument(
+        "--registry",
+        type=Path,
+        default=REGISTRY_PATH if REGISTRY_PATH.exists() else None,
+        help="JSON map of Rack plugin slug/name to git repo.",
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
