@@ -49,7 +49,7 @@
     ];
 
     ~plaitsModelPool = [0, 1, 3, 4, 5, 6, 11, 12];
-    ~plaitsPercussiveModels = [11, 11, 12, 12, 3, 1];
+    ~plaitsPercussiveModels = [11, 11, 12, 12, 3, 3, 4, 5, 6, 1];
 
     ~pedalCandidates = [
         \chorus, \phaser, \vibrato, \tremolo, \delay, \reverb,
@@ -316,13 +316,11 @@
     ~rhythmProfilesFor = { |modifier|
         switch(modifier,
             \percussive, { [
-                \grid16, \shuffle16, \euclid, \burst, \poly23, \polyphase, \pulseFold, \ratioLattice,
-                \bresenham, \bresenhamWeighted, \cellular1d, \cellular2d, \deBruijn, \fibonacci,
-                \vanDerCorput, \logistic, \lorenz, \lsystem, \perlinGate, \perlin2d, \pinkGate,
-                \probGate, \reactionDiff, \thueMorse, \selfAvoid, \walkHits, \rotateEuclid,
-                \layeredEuclid, \nestedEuclid, \xorEuclid, \moduloLattice, \primeLattice,
-                \interference, \densityWave, \fracture, \clusterCompress, \caXorEuclid, \phaseDrift,
-                \ghostGrid, \weightedHits
+                \grid16, \grid16, \shuffle16, \euclid, \euclid, \rotateEuclid, \layeredEuclid,
+                \nestedEuclid, \bresenham, \bresenhamWeighted, \moduloLattice, \primeLattice,
+                \fibonacci, \vanDerCorput, \thueMorse, \pulseFold, \poly23, \polyphase,
+                \ratioLattice, \interference, \densityWave, \ghostGrid, \weightedHits,
+                \clusterCompress, \walkHits, \selfAvoid, \lsystem, \probGate
             ] },
             \drone, { [\pulse, \breath, \swell, \ritual] },
             \harmonic, { [\arp, \motif, \canon, \hymn, \pulseHarm] },
@@ -959,7 +957,7 @@
         var pool;
         var chain;
         pool = switch(modifier,
-            \percussive, { [\bitcrusher, \tremolo, \autowah, \ringmod, \wavefolder] },
+            \percussive, { [\tremolo, \tremolo, \autowah, \autowah, \phaser, \chorus, \delay, \wavefolder] },
             \drone, { [\reverb, \lofi, \chorus, \delay, \vibrato, \phaser] },
             \harmonic, { [\chorus, \vibrato, \reverb, \phaser, \delay, \tremolo] },
             \chaos, { [\ringmod, \wavefolder, \bitcrusher, \lofi, \autowah, \delay, \reverb] },
@@ -1235,7 +1233,7 @@
         );
         var dexedPatchSeed = dexed[\patchSeed];
         var dexedPatchInfo = "";
-        var dexedAvailable = if(enginePreference == \dexed, { self[\refreshDexed].value(self) }, { false });
+        var dexedAvailable = if(enginePreference == \dexed, { self[\refreshDexed].value(self) }, { self[\refreshDexed].value(self) });
         var sourceEngine = \any;
         var freshPool;
         var avoidPool;
@@ -1275,53 +1273,62 @@
         });
         switch(modifier,
             \percussive, {
-                materialPool = [\fold, \fold, \fold, \plaits, \plaits, \plaits, \plaits, \passersby];
-                register = [[36, 72], [40, 76], [45, 84], [48, 88]].choose;
-                minGap = minGap * 0.35;
-                gap = self[\rand].value(self, 0.06, 0.32);
-                restProb = self[\rand].value(self, 0.0, 0.04);
-                volatility = self[\rand].value(self, 1.35, 2.35);
-                densitySkew = self[\rand].value(self, 1.35, maxDensity.max(1.85));
+                materialPool = [\plaits, \plaits, \plaits, \plaits, \rings, \rings, \rings, \passersby, \passersby, \fold];
+                if(dexedAvailable, { materialPool = materialPool ++ [\dexed, \dexed]; });
+                if(vitalAvailable, { materialPool = materialPool ++ [\vital]; });
+                if(vcvAvailable, { materialPool = materialPool ++ [\vcv]; });
+                register = [[36, 60], [38, 64], [43, 67], [48, 72]].choose;
+                minGap = minGap * 0.55;
+                gap = self[\rand].value(self, 0.09, 0.42);
+                restProb = self[\rand].value(self, 0.04, 0.18);
+                volatility = self[\rand].value(self, 0.85, 1.65);
+                densitySkew = self[\rand].value(self, 0.72, maxDensity.max(1.20));
                 rhythmProfile = self[\rhythmProfilesFor].value(\percussive).choose;
-                pulse = self[\rand].value(self, 0.055, 0.12);
-                swing = self[\rand].value(self, 0.08, 0.48);
+                pulse = [self[\rand].value(self, 0.060, 0.095), self[\rand].value(self, 0.095, 0.145), self[\rand].value(self, 0.145, 0.205)].choose;
+                swing = [self[\rand].value(self, 0.00, 0.12), self[\rand].value(self, 0.12, 0.32), self[\rand].value(self, 0.00, 0.05)].choose;
                 plaitsModels = Array.fill(1, { self[\plaitsPercussiveModels].choose });
                 molly[\oscWaveShape] = [0, 0, 1, 1, 2].choose;
-                molly[\envAttack] = self[\exprand].value(self, 0.001, 0.02);
-                molly[\envDecay] = self[\exprand].value(self, 0.05, 0.55);
-                molly[\envSustain] = self[\rand].value(self, 0.0, 0.12);
-                molly[\envRelease] = self[\exprand].value(self, 0.04, 0.45);
-                molly[\noiseLevel] = self[\exprand].value(self, 0.01, 0.22);
-                molly[\lpFilterModEnv] = self[\rand].value(self, 0.12, 0.42);
-                molly[\subOscLevel] = self[\rand].value(self, 0.0, 0.35);
-                passersby[\attack] = self[\exprand].value(self, 0.001, 0.025);
-                passersby[\decay] = self[\exprand].value(self, 0.035, 0.26);
-                passersby[\peak] = self[\exprand].value(self, 700, 7200);
-                passersby[\reverbMix] = self[\rand].value(self, 0.0, 0.04);
-                passersby[\body] = self[\rand].value(self, 0.0, 0.16);
-                passersby[\foldMix] = self[\rand].value(self, 0.18, 0.72);
-                passersby[\air] = self[\exprand].value(self, 0.004, 0.035);
+                molly[\envAttack] = self[\exprand].value(self, 0.004, 0.045);
+                molly[\envDecay] = self[\exprand].value(self, 0.12, 0.85);
+                molly[\envSustain] = self[\rand].value(self, 0.0, 0.10);
+                molly[\envRelease] = self[\exprand].value(self, 0.08, 0.70);
+                molly[\noiseLevel] = self[\exprand].value(self, 0.002, 0.09);
+                molly[\lpFilterModEnv] = self[\rand].value(self, 0.06, 0.28);
+                molly[\freqModLfo] = self[\exprand].value(self, 0.0001, 0.018);
+                molly[\freqModEnv] = self[\rand].value(self, -0.006, 0.018);
+                molly[\ringModMix] = 0;
+                molly[\ampMod] = self[\rand].value(self, 0.0, 0.08);
+                molly[\subOscLevel] = self[\rand].value(self, 0.0, 0.24);
+                passersby[\attack] = self[\exprand].value(self, 0.004, 0.045);
+                passersby[\decay] = self[\exprand].value(self, 0.09, 0.75);
+                passersby[\peak] = self[\exprand].value(self, 650, 5400);
+                passersby[\reverbMix] = self[\rand].value(self, 0.0, 0.08);
+                passersby[\body] = self[\rand].value(self, 0.14, 0.58);
+                passersby[\foldMix] = self[\rand].value(self, 0.04, 0.34);
+                passersby[\air] = self[\exprand].value(self, 0.002, 0.022);
+                passersby[\fm1Amount] = self[\rand].value(self, 0.0, 0.10);
+                passersby[\fm2Amount] = self[\rand].value(self, 0.0, 0.08);
                 rings = (
-                    model: [0, 1, 0, 1].choose,
+                    model: [0, 0, 1, 2].choose,
                     poly: 1,
-                    struct: self[\rand].value(self, 0.58, 0.98),
-                    bright: self[\rand].value(self, 0.35, 0.92),
-                    damp: self[\rand].value(self, 0.58, 0.98),
-                    pos: self[\rand].value(self, 0.12, 0.78),
-                    envDecay: self[\exprand].value(self, 0.035, 0.22),
-                    envRelease: self[\exprand].value(self, 0.02, 0.12)
+                    struct: self[\rand].value(self, 0.20, 0.78),
+                    bright: self[\rand].value(self, 0.28, 0.82),
+                    damp: self[\rand].value(self, 0.48, 0.94),
+                    pos: self[\rand].value(self, 0.10, 0.70),
+                    envDecay: self[\exprand].value(self, 0.09, 0.55),
+                    envRelease: self[\exprand].value(self, 0.06, 0.24)
                 );
                 dexed[\velocity] = self[\rand].value(self, 72, 118).round(1);
-                dexed[\durScale] = self[\exprand].value(self, 0.06, 0.42);
-                dexed[\octaveBias] = [-12, 0, 0, 12].choose;
+                dexed[\durScale] = self[\exprand].value(self, 0.10, 0.62);
+                dexed[\octaveBias] = [-12, 0, 0, 0, 12].choose;
                 dexed[\patchProfile] = \percussive;
                 vital[\velocity] = self[\rand].value(self, 68, 118).round(1);
-                vital[\durScale] = self[\exprand].value(self, 0.06, 0.38);
-                vital[\octaveBias] = [-12, 0, 0, 12].choose;
+                vital[\durScale] = self[\exprand].value(self, 0.10, 0.55);
+                vital[\octaveBias] = [-12, 0, 0, 0, 12].choose;
                 vital[\patchProfile] = \percussive;
                 vcv[\velocity] = self[\rand].value(self, 70, 118).round(1);
-                vcv[\durScale] = self[\exprand].value(self, 0.08, 0.45);
-                vcv[\octaveBias] = [-12, 0, 0, 12].choose;
+                vcv[\durScale] = self[\exprand].value(self, 0.10, 0.58);
+                vcv[\octaveBias] = [-12, 0, 0, 0, 12].choose;
                 vcv[\patchProfile] = \percussive;
                 if(fx == \clouds, {
                     clouds[\dens] = self[\rand].value(self, 0.45, 0.95);
@@ -1498,7 +1505,7 @@
         });
         if(enginePreference != \dexed and: { materials.select({ |source| source != \dexed }).isEmpty }, {
             materials[0] = switch(modifier,
-                \percussive, { [\fold, \plaits, \passersby].choose },
+                \percussive, { [\plaits, \plaits, \rings, \rings, \passersby, \fold].choose },
                 \chaos, { [\fold, \passersby, \plaits].choose },
                 \drone, { [\rings, \passersby, \molly].choose },
                 \harmonic, { [\rings, \plaits, \molly].choose },
@@ -1507,7 +1514,7 @@
         });
         if(enginePreference != \vital and: { materials.select({ |source| source != \vital }).isEmpty }, {
             materials[0] = switch(modifier,
-                \percussive, { [\fold, \plaits, \passersby].choose },
+                \percussive, { [\plaits, \plaits, \rings, \rings, \passersby, \fold].choose },
                 \chaos, { [\fold, \passersby, \plaits].choose },
                 \drone, { [\rings, \passersby, \molly].choose },
                 \harmonic, { [\rings, \plaits, \molly].choose },
@@ -1516,7 +1523,7 @@
         });
         if(enginePreference != \vcv and: { materials.select({ |source| source != \vcv }).isEmpty }, {
             materials[0] = switch(modifier,
-                \percussive, { [\fold, \plaits, \passersby].choose },
+                \percussive, { [\plaits, \plaits, \rings, \rings, \passersby, \fold].choose },
                 \chaos, { [\fold, \passersby, \plaits].choose },
                 \drone, { [\rings, \passersby, \molly].choose },
                 \harmonic, { [\rings, \plaits, \molly].choose },
@@ -1769,14 +1776,14 @@
                     \out, lane[\sourceBus].index,
                     \pitch, pitch,
                     \engine, lane[\plaitsModels].choose,
-                    \harm, if(isPerc, { self[\rand].value(self, 0.02, 0.55) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.05, 0.95) }) }),
-                    \timbre, if(isPerc, { self[\rand].value(self, 0.22, 0.88) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.10, 0.98) }) }),
-                    \morph, if(isPerc, { self[\rand].value(self, 0.05, 0.58) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.08, 0.98) }) }),
-                    \decay, (if(isDrone, { self[\exprand].value(self, 3.0, 14.0) }, { if(isPerc, { self[\exprand].value(self, 0.018, 0.24) }, { if(isChaos, { self[\exprand].value(self, 0.008, 4.5) }, { self[\exprand].value(self, 0.08, 3.2) }) }) })) * decayScale * sustainScale,
-                    \colour, if(isPerc, { self[\rand].value(self, 0.35, 0.92) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.15, 0.90) }) }),
+                    \harm, if(isPerc, { self[\rand].value(self, 0.04, 0.68) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.05, 0.95) }) }),
+                    \timbre, if(isPerc, { self[\rand].value(self, 0.18, 0.78) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.10, 0.98) }) }),
+                    \morph, if(isPerc, { self[\rand].value(self, 0.08, 0.70) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.08, 0.98) }) }),
+                    \decay, (if(isDrone, { self[\exprand].value(self, 3.0, 14.0) }, { if(isPerc, { self[\exprand].value(self, 0.045, 0.42) }, { if(isChaos, { self[\exprand].value(self, 0.008, 4.5) }, { self[\exprand].value(self, 0.08, 3.2) }) }) })) * decayScale * sustainScale,
+                    \colour, if(isPerc, { self[\rand].value(self, 0.28, 0.82) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.15, 0.90) }) }),
                     \amp, lane[\amp] * accent * (if(isChaos, { self[\rand].value(self, 0.35, 1.45) }, { 1.0 })),
                     \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.75 }), if(isChaos, { 0.95 }, { 0.75 })) + panBias).clip(-1, 1),
-                    \envTail, if(isDrone, { self[\rand].value(self, 1.0, 4.5) }, { if(isPerc, { 0.035 }, { if(isChaos, { self[\rand].value(self, 0.02, 1.2) }, { 0.25 }) }) }),
+                    \envTail, if(isDrone, { self[\rand].value(self, 1.0, 4.5) }, { if(isPerc, { 0.075 }, { if(isChaos, { self[\rand].value(self, 0.02, 1.2) }, { 0.25 }) }) }),
                     \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
@@ -1804,11 +1811,11 @@
             if(source == \fold) {
                 Synth.head(lane[\group], \eapLaneFoldNote, [
                     \out, lane[\sourceBus].index, \freq, pitch.midicps,
-                    \fold, if(isPerc, { self[\rand].value(self, 0.45, 2.6) }, { if(isChaos, { self[\rand].value(self, 0.05, 5.5) }, { self[\rand].value(self, 0.25, 2.8) }) }),
-                    \fm, if(isPerc, { self[\rand].value(self, 0.08, 0.75) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.4) }, { self[\rand].value(self, 0.02, 0.60) }) }),
-                    \cutoff, if(isPerc, { self[\exprand].value(self, 900, 9500) }, { if(isChaos, { self[\exprand].value(self, 80, 16000) }, { self[\exprand].value(self, 450, 9000) }) }),
-                    \decay, (if(isPerc, { self[\exprand].value(self, 0.025, 0.22) }, { if(isChaos, { self[\exprand].value(self, 0.006, 3.8) }, { self[\exprand].value(self, 0.10, 2.4) }) })) * decayScale * sustainScale,
-                    \amp, lane[\amp] * accent * (if(isPerc, { 0.88 }, { if(isChaos, { self[\rand].value(self, 0.35, 1.2) }, { 0.75 }) })),
+                    \fold, if(isPerc, { self[\rand].value(self, 0.20, 1.15) }, { if(isChaos, { self[\rand].value(self, 0.05, 5.5) }, { self[\rand].value(self, 0.25, 2.8) }) }),
+                    \fm, if(isPerc, { self[\rand].value(self, 0.0, 0.24) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.4) }, { self[\rand].value(self, 0.02, 0.60) }) }),
+                    \cutoff, if(isPerc, { self[\exprand].value(self, 650, 5200) }, { if(isChaos, { self[\exprand].value(self, 80, 16000) }, { self[\exprand].value(self, 450, 9000) }) }),
+                    \decay, (if(isPerc, { self[\exprand].value(self, 0.07, 0.45) }, { if(isChaos, { self[\exprand].value(self, 0.006, 3.8) }, { self[\exprand].value(self, 0.10, 2.4) }) })) * decayScale * sustainScale,
+                    \amp, lane[\amp] * accent * (if(isPerc, { 0.72 }, { if(isChaos, { self[\rand].value(self, 0.35, 1.2) }, { 0.75 }) })),
                     \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.70 }), if(isChaos, { 0.95 }, { 0.70 })) + panBias).clip(-1, 1),
                     \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
@@ -1868,7 +1875,7 @@
             if(source == \dexed) {
                 var d = lane[\dexed];
                 var noteDur = lane[\gap] * (d[\durScale] ? 1.0) * decayScale;
-                noteDur = if(isPerc, { noteDur.clip(0.04, 0.65) }, { if(isDrone, { noteDur.clip(2.0, 18.0) }, { if(isChaos, { noteDur.clip(0.02, 6.5) }, { noteDur.clip(0.08, 8.0) }) }) });
+                noteDur = if(isPerc, { noteDur.clip(0.06, 0.85) }, { if(isDrone, { noteDur.clip(2.0, 18.0) }, { if(isChaos, { noteDur.clip(0.02, 6.5) }, { noteDur.clip(0.08, 8.0) }) }) });
                 self[\sendDexedNote].value(self,
                     d[\channel] ? 0,
                     (pitch + (d[\octaveBias] ? 0)).clip(0, 127),
@@ -1880,7 +1887,7 @@
             if(source == \vital) {
                 var v = lane[\vital];
                 var noteDur = lane[\gap] * (v[\durScale] ? 1.0) * decayScale;
-                noteDur = if(isPerc, { noteDur.clip(0.04, 0.55) }, { if(isDrone, { noteDur.clip(2.5, 20.0) }, { if(isChaos, { noteDur.clip(0.02, 8.0) }, { noteDur.clip(0.08, 10.0) }) }) });
+                noteDur = if(isPerc, { noteDur.clip(0.06, 0.72) }, { if(isDrone, { noteDur.clip(2.5, 20.0) }, { if(isChaos, { noteDur.clip(0.02, 8.0) }, { noteDur.clip(0.08, 10.0) }) }) });
                 self[\sendVitalNote].value(self,
                     (pitch + (v[\octaveBias] ? 0)).clip(0, 127),
                     ((v[\velocity] ? 82) * accent).clip(if(isChaos, { 16 }, { 24 }), 126),
@@ -1891,7 +1898,7 @@
             if(source == \vcv) {
                 var v = lane[\vcv];
                 var noteDur = lane[\gap] * (v[\durScale] ? 1.0) * decayScale;
-                noteDur = if(isPerc, { noteDur.clip(0.04, 0.65) }, { if(isDrone, { noteDur.clip(2.5, 20.0) }, { if(isChaos, { noteDur.clip(0.02, 8.5) }, { noteDur.clip(0.08, 10.0) }) }) });
+                noteDur = if(isPerc, { noteDur.clip(0.06, 0.82) }, { if(isDrone, { noteDur.clip(2.5, 20.0) }, { if(isChaos, { noteDur.clip(0.02, 8.5) }, { noteDur.clip(0.08, 10.0) }) }) });
                 self[\sendVcvNote].value(self,
                     (pitch + (v[\octaveBias] ? 0)).clip(0, 127),
                     ((v[\velocity] ? 82) * accent).clip(if(isChaos, { 16 }, { 24 }), 126),

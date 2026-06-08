@@ -17,7 +17,7 @@ Profile = str
 LaneCfg = Dict[str, Any]
 
 SCALE_STEPS = {
-    "percussive": [-2, -1, 0, 0, 0, 1, 1, 2, 3],
+    "percussive": [-2, -1, 0, 0, 0, 0, 1, 1, 2],
     "drone": [0, 0, 0, 0, 1, 1, 2, -1],
     "harmonic": [-2, -1, 0, 0, 0, 1, 1, 2, 3, 4],
     "chaos": [-4, -3, -2, -1, 0, 1, 2, 3, 4, 5],
@@ -216,10 +216,14 @@ def _emit_hit(
     pan_bias = rng.uniform(-0.45, 0.45)
     if decay_scale is None:
         decay_scale = {
-            "percussive": rng.uniform(0.28, 0.85),
+            "percussive": rng.uniform(0.55, 1.45),
             "drone": rng.uniform(2.8, 7.5),
             "chaos": rng.uniform(0.015, 2.8),
         }.get(modifier, rng.uniform(0.7, 1.25))
+
+    if modifier == "percussive":
+        accent = max(0.45, min(1.85, accent))
+        pan_bias *= 0.72
 
     beat = pulse / subsequence.constants.MIDI_QUARTER_NOTE
     if modifier == "chaos":
@@ -298,6 +302,40 @@ def _emit_at_step(
     **kwargs: Any,
 ) -> None:
     _emit_hit(p, slot, _step_pulse(p, step % max(1, p.grid)), cfg, composition, rng, accent_scale, **kwargs)
+
+
+def _percussive_decay(rng: random.Random, family: str) -> float:
+    return {
+        "groove": lambda: rng.uniform(0.72, 1.55),
+        "clave": lambda: rng.uniform(0.62, 1.20),
+        "ghost": lambda: rng.uniform(0.45, 0.88),
+        "metal": lambda: rng.uniform(0.85, 1.85),
+        "wood": lambda: rng.uniform(0.55, 1.05),
+        "fill": lambda: rng.uniform(0.40, 0.95),
+        "space": lambda: rng.uniform(1.05, 2.10),
+    }.get(family, lambda: rng.uniform(0.58, 1.35))()
+
+
+def _emit_percussive_step(
+    p: Any,
+    slot: int,
+    cfg: LaneCfg,
+    composition: Any,
+    rng: random.Random,
+    step: int,
+    accent_scale: float = 1.0,
+    family: str = "groove",
+) -> None:
+    _emit_at_step(
+        p,
+        slot,
+        cfg,
+        composition,
+        rng,
+        step,
+        accent_scale,
+        decay_scale=_percussive_decay(rng, family),
+    )
 
 
 def _emit_binary_grid(
@@ -400,11 +438,11 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
 
     def bresenhamWeighted(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
-        weights = [rng.uniform(0.4, 3.2) for _ in range(p.grid)]
+        weights = [rng.uniform(0.35, 2.4) for _ in range(p.grid)]
         pulses = su.generate_bresenham_sequence_weighted(p.grid, weights)
         for step in sorted({value % p.grid for value in pulses}):
             accent = 0.85 + weights[step] * 0.22
-            _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+            _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "wood")
 
     def cellular1d(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -448,7 +486,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         slot = int(cfg["slot"])
         for step in _fibonacci_steps(p, p.grid):
             accent = 1.05 if step % 2 == 0 else 0.92
-            _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+            _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "clave")
 
     def vanDerCorput(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -456,7 +494,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         values = su.generate_van_der_corput_sequence(p.grid, base)
         for step in _vdc_sparse_steps(values, p.grid, rng):
             accent = 0.78 + values[step] * 0.55
-            _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+            _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "space")
 
     def logistic(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -489,7 +527,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         axiom, rules = rng.choice(presets)
         expanded = su.lsystem_expand(axiom, rules, rng.randint(2, 4), rng)
         for step in _lsystem_hit_steps(expanded, p.grid):
-            _emit_at_step(p, slot, cfg, composition, rng, step, rng.uniform(0.85, 1.35))
+            _emit_percussive_step(p, slot, cfg, composition, rng, step, rng.uniform(0.82, 1.25), "wood")
 
     def perlinGate(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -560,7 +598,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         accents = su.random_walk(len(indices), -3, 4, 1, rng, start=0)
         for step, accent_delta in zip(indices, accents):
             accent = max(0.65, min(1.65, 1.0 + accent_delta * 0.12))
-            _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+            _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "groove")
 
     def rotateEuclid(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -569,7 +607,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         indices = su.sequence_to_indices(grid)
         rolled = su.roll(indices, rng.randint(0, max(0, p.grid - 1)), p.grid)
         for step in rolled:
-            _emit_at_step(p, slot, cfg, composition, rng, step)
+            _emit_percussive_step(p, slot, cfg, composition, rng, step, 1.08 if step % 4 == 0 else 0.92, "groove")
 
     def layeredEuclid(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -597,9 +635,9 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
             if not hit:
                 continue
             primary = idx * 2
-            _emit_at_step(p, slot, cfg, composition, rng, primary, 1.15)
-            if rng.random() < 0.55:
-                _emit_at_step(p, slot, cfg, composition, rng, primary + 1, 0.72)
+            _emit_percussive_step(p, slot, cfg, composition, rng, primary, 1.15, "wood")
+            if rng.random() < 0.42:
+                _emit_percussive_step(p, slot, cfg, composition, rng, primary + 1, 0.62, "ghost")
 
     def xorEuclid(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -634,7 +672,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
             is_prime = step in primes
             if is_prime ^ invert:
                 accent = 1.12 if is_prime else 0.84
-                _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+                _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "metal" if is_prime else "ghost")
 
     def interference(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -646,9 +684,9 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
             hit_a = seq_a[step % cycle_a]
             hit_b = seq_b[step % cycle_b]
             if hit_a and hit_b:
-                _emit_at_step(p, slot, cfg, composition, rng, step, 1.28)
+                _emit_percussive_step(p, slot, cfg, composition, rng, step, 1.28, "metal")
             elif hit_a or hit_b:
-                _emit_at_step(p, slot, cfg, composition, rng, step, 0.78 if rng.random() < 0.55 else 0.92)
+                _emit_percussive_step(p, slot, cfg, composition, rng, step, 0.78 if rng.random() < 0.55 else 0.92, "ghost")
 
     def densityWave(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -658,7 +696,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         for step, hit in enumerate(base):
             if hit and envelope[step] >= threshold:
                 accent = 0.72 + envelope[step] * 0.85
-                _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+                _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "space")
 
     def fracture(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -682,12 +720,12 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         grid = su.generate_euclidean_sequence(p.grid, max(2, int(p.grid * 0.35)))
         for step, hit in enumerate(grid):
             if hit and step < anchor:
-                _emit_at_step(p, slot, cfg, composition, rng, step, 1.05)
+                _emit_percussive_step(p, slot, cfg, composition, rng, step, 1.05, "groove")
         tail = _fibonacci_steps(p, max(4, p.grid - anchor))[-max(3, p.grid // 4) :]
         for offset, _step in enumerate(tail):
             mapped = min(p.grid - 1, anchor + offset)
             accent = 0.95 + offset * 0.08
-            _emit_at_step(p, slot, cfg, composition, rng, mapped, accent)
+            _emit_percussive_step(p, slot, cfg, composition, rng, mapped, accent, "fill")
 
     def caXorEuclid(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -713,17 +751,17 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         for step, hit in enumerate(gated):
             if hit:
                 accent = 0.62 if dense[step] and rng.random() < 0.45 else 1.15
-                _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+                _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "ghost" if accent < 0.8 else "groove")
 
     def weightedHits(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
         options = [(step, rng.uniform(0.2, 2.8)) for step in range(p.grid)]
-        count = max(3, int(p.grid * rng.uniform(0.35, 0.65)))
+        count = max(3, int(p.grid * rng.uniform(0.24, 0.52)))
         picks = [su.weighted_choice(options, rng) for _ in range(count)]
         weight_by_step = {step: weight for step, weight in options}
         for step in sorted(set(picks)):
             accent = 0.82 + weight_by_step[step] * 0.25
-            _emit_at_step(p, slot, cfg, composition, rng, step, accent)
+            _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, "wood")
 
     return {
         "bresenham": bresenham,
@@ -1105,10 +1143,31 @@ def _chaos_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Ra
 
 def _profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Random, Any], None]]:
     def grid16(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
-        _grid_hits(p, cfg, composition, rng, int(p.grid * 0.72))
+        if cfg.get("modifier") == "percussive":
+            slot = int(cfg["slot"])
+            density = rng.choice([0.38, 0.50, 0.62, 0.75])
+            grid = su.generate_euclidean_sequence(p.grid, max(3, int(p.grid * density)))
+            downbeat = rng.choice([0, 4, 8, 12])
+            grid[downbeat % p.grid] = 1
+            for step, hit in enumerate(grid):
+                if hit:
+                    accent = 1.35 if step % 4 == 0 else rng.uniform(0.72, 1.12)
+                    family = "groove" if step % 4 == 0 else "ghost"
+                    _emit_percussive_step(p, slot, cfg, composition, rng, step, accent, family)
+        else:
+            _grid_hits(p, cfg, composition, rng, int(p.grid * 0.72))
 
     def euclid(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
-        _grid_hits(p, cfg, composition, rng, int(p.grid * rng.uniform(0.42, 0.82)))
+        if cfg.get("modifier") == "percussive":
+            slot = int(cfg["slot"])
+            hits = max(3, min(p.grid - 1, int(p.grid * rng.uniform(0.30, 0.64))))
+            grid = su.generate_euclidean_sequence(p.grid, hits)
+            grid = su.rotate(grid, rng.randint(0, max(0, p.grid - 1)))
+            for step, hit in enumerate(grid):
+                if hit:
+                    _emit_percussive_step(p, slot, cfg, composition, rng, step, 1.15 if step % 4 == 0 else 0.92, "wood")
+        else:
+            _grid_hits(p, cfg, composition, rng, int(p.grid * rng.uniform(0.42, 0.82)))
 
     def shuffle16(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -1121,7 +1180,19 @@ def _profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Random, 
                 pulse = _step_pulse(p, step)
                 if swing > 0.02 and step % 2 == 1:
                     pulse = int(pulse * (1.0 + swing * 0.35))
-                _emit_hit(p, slot, pulse, cfg, composition, rng)
+                if cfg.get("modifier") == "percussive":
+                    _emit_hit(
+                        p,
+                        slot,
+                        pulse,
+                        cfg,
+                        composition,
+                        rng,
+                        1.22 if step % 4 == 0 else rng.uniform(0.70, 1.05),
+                        decay_scale=_percussive_decay(rng, "groove" if step % 4 == 0 else "ghost"),
+                    )
+                else:
+                    _emit_hit(p, slot, pulse, cfg, composition, rng)
 
     def polyphase(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
@@ -1163,12 +1234,31 @@ def _profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Random, 
         slot = int(cfg["slot"])
         cluster = rng.randint(4, 8)
         step_beats = p._pattern.length / max(1, p.grid)
+        start = rng.randint(0, max(0, p.grid - 5))
+        spacing = rng.choice([0.50, 0.67, 1.0])
         for i in range(cluster):
-            beat = (i * step_beats * 0.35) % p._pattern.length
-            _emit_hit(p, slot, int(beat * subsequence.constants.MIDI_QUARTER_NOTE), cfg, composition, rng, 1.25)
+            beat = ((start + (i * spacing)) * step_beats) % p._pattern.length
+            _emit_hit(
+                p,
+                slot,
+                int(beat * subsequence.constants.MIDI_QUARTER_NOTE),
+                cfg,
+                composition,
+                rng,
+                1.20 - min(0.55, i * 0.08),
+                decay_scale=_percussive_decay(rng, "fill"),
+            )
 
     def poly23(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
-        _grid_hits(p, cfg, composition, rng, int(p.grid * 0.58))
+        if cfg.get("modifier") == "percussive":
+            slot = int(cfg["slot"])
+            cycle_a = rng.choice([3, 5])
+            cycle_b = rng.choice([4, 7])
+            for step in range(p.grid):
+                if step % cycle_a == 0 or (step + rng.randint(0, 2)) % cycle_b == 0:
+                    _emit_percussive_step(p, slot, cfg, composition, rng, step, 1.18 if step % cycle_a == 0 else 0.82, "clave")
+        else:
+            _grid_hits(p, cfg, composition, rng, int(p.grid * 0.58))
 
     def pulse(pf: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
