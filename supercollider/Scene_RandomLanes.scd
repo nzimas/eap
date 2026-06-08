@@ -57,7 +57,7 @@
     ];
 
     ~soundModifierSymbols = [\percussive, \drone, \chaos];
-    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \fold, \dexed, \vital, \vcv];
+    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \dexed, \vital, \vcv];
 
     ~modifierFromCode = { |self, code|
         var index = code.asInteger;
@@ -235,7 +235,7 @@
         if(active and: { lane[\state] == \active }) {
             seed = (lane[\slot] ? lane[\index] ? 1).hash.abs;
             scale = self[\scales].wrapAt(self[\scaleIndex]);
-            material = (lane[\materials][0] ? \rings).asString;
+            material = (lane[\materials][0] ? \none).asString;
             addr.sendMsg('/eap/seq/lane', slot, 1,
                 (lane[\soundModifier] ? \harmonic).asString,
                 (lane[\pulse] ? 0.12).asFloat,
@@ -525,26 +525,6 @@
             sig = MiRings.ar(exciter, trig, pitch, st, br, da, po, model, poly, 1, 0);
             env = EnvGen.kr(Env.linen(0.002, envDecay.max(0.04), envRelease.max(0.02)), doneAction: 2);
             sig = Balance2.ar(sig[0], sig[1], pan, amp) * env;
-            Out.ar(out, LeakDC.ar(sig));
-        }).add;
-
-        SynthDef(\eapLaneFoldNote, { |out = 0, freq = 220, fold = 1.0, fm = 0.1,
-            cutoff = 2200, decay = 1.0, amp = 0.1, pan = 0,
-            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
-            var env, mod, sig, lfo, drift, f, fmAmt, cut;
-            env = EnvGen.kr(Env.perc(0.004, decay, curve: -4), doneAction: 2);
-            lfo = Select.kr(modShape.clip(0, 3), [
-                SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
-            ]);
-            drift = LFNoise1.kr((modRate * 0.7).max(0.06));
-            f = (fold + (lfo * modDepth * 1.6) + (drift * modRand * 1.2)).clip(0.05, 4.0);
-            fmAmt = (fm + (lfo * modDepth * 0.22) + (drift * modRand * 0.18)).clip(0, 1.2);
-            cut = (cutoff * (1 + (lfo * modDepth * 1.2) + (drift * modRand * 0.8))).clip(120, 12000);
-            mod = SinOsc.ar(freq * [1.5, 2, 3].choose, 0, freq * fmAmt);
-            sig = VarSaw.ar(freq + mod, 0, 0.45) + SinOsc.ar(freq * 0.5, 0, 0.25);
-            sig = Fold.ar(sig * (1 + (f * 3)), -0.7, 0.7);
-            sig = RLPF.ar(sig, cut, 0.72);
-            sig = Pan2.ar(sig * env * amp, pan);
             Out.ar(out, LeakDC.ar(sig));
         }).add;
 
@@ -1142,7 +1122,7 @@
 
     ~randomLane = { |self, index, total, modifier = nil, adaptive = nil|
         var enginePreference = self[\sourceEnginePreference];
-        var materialPool = [\plaits, \plaits, \rings, \rings, \fold, \passersby, \passersby];
+        var materialPool = [\plaits, \plaits, \rings, \rings, \passersby, \passersby, \molly];
         var materials;
         var fx = self[\chooseFxBackend].value(self, index, total, modifier);
         var register = [[31, 52], [36, 62], [45, 72], [52, 84]].choose;
@@ -1260,7 +1240,7 @@
         );
         var vcvPatchSeed = vcv[\patchSeed];
         var vcvPatchInfo = "";
-        var vcvAvailable = if(enginePreference == \vcv, { self[\vcvRuntimeAvailable].value(self) }, { self[\refreshVcv].value(self) });
+        var vcvAvailable = self[\vcvRuntimeAvailable].value(self);
         var cpuClass = \normal;
         if(dexedAvailable, {
             materialPool = materialPool ++ [\dexed, \dexed];
@@ -1273,7 +1253,7 @@
         });
         switch(modifier,
             \percussive, {
-                materialPool = [\plaits, \plaits, \plaits, \plaits, \rings, \rings, \rings, \passersby, \passersby, \fold];
+                materialPool = [\plaits, \plaits, \plaits, \plaits, \rings, \rings, \rings, \passersby, \passersby];
                 if(dexedAvailable, { materialPool = materialPool ++ [\dexed, \dexed]; });
                 if(vitalAvailable, { materialPool = materialPool ++ [\vital]; });
                 if(vcvAvailable, { materialPool = materialPool ++ [\vcv]; });
@@ -1409,7 +1389,7 @@
                 });
             },
             \chaos, {
-                materialPool = [\fold, \fold, \passersby, \plaits, \rings, \molly, \passersby, \plaits, \rings];
+                materialPool = [\passersby, \passersby, \plaits, \plaits, \rings, \rings, \molly];
                 register = [[24, 96], [28, 88], [31, 84], [36, 96]].choose;
                 gap = self[\rand].value(self, 0.04, 0.85);
                 restProb = self[\rand].value(self, 0.08, 0.42);
@@ -1477,58 +1457,30 @@
             });
         });
         if(enginePreference.notNil, {
-            if(enginePreference == \dexed and: { dexedAvailable.not }, {
-                "EAP future source engine dexed unavailable; using modifier material pool".postln;
+            materialPool = if(enginePreference == \dexed and: { dexedAvailable.not }, {
+                "EAP selected engine dexed unavailable; no fallback source".postln;
+                [];
             }, {
                 if(enginePreference == \vital and: { vitalAvailable.not }, {
-                    "EAP future source engine vital unavailable; using modifier material pool".postln;
+                    "EAP selected engine vital unavailable; no fallback source".postln;
+                    [];
                 }, {
-                    if(enginePreference == \vcv, {
-                        if(vcvAvailable.not, {
-                            "EAP future source engine vcv unavailable; scene will not use VCV".postln;
-                        }, {
-                            materialPool = [\vcv];
-                        });
+                    if(enginePreference == \vcv and: { vcvAvailable.not }, {
+                        "EAP selected engine vcv unavailable; no fallback source".postln;
+                        [];
                     }, {
-                        materialPool = [enginePreference];
+                        [enginePreference];
                     });
                 });
             });
         });
-        materials = [materialPool.choose];
+        materials = if(materialPool.isEmpty, { [] }, { [materialPool.choose] });
         if(enginePreference.isNil and: { (modifier != \drone) and: { modifier != \harmonic } }, {
             materials = materials.reject({ |source| source == \molly });
             while({ materials.isEmpty and: { materialPool.notEmpty } }, {
                 materials = materials.add(materialPool.choose);
                 materials = materials.reject({ |source| source == \molly });
             });
-        });
-        if(enginePreference != \dexed and: { materials.select({ |source| source != \dexed }).isEmpty }, {
-            materials[0] = switch(modifier,
-                \percussive, { [\plaits, \plaits, \rings, \rings, \passersby, \fold].choose },
-                \chaos, { [\fold, \passersby, \plaits].choose },
-                \drone, { [\rings, \passersby, \molly].choose },
-                \harmonic, { [\rings, \plaits, \molly].choose },
-                { [\plaits, \rings, \fold, \passersby].choose }
-            );
-        });
-        if(enginePreference != \vital and: { materials.select({ |source| source != \vital }).isEmpty }, {
-            materials[0] = switch(modifier,
-                \percussive, { [\plaits, \plaits, \rings, \rings, \passersby, \fold].choose },
-                \chaos, { [\fold, \passersby, \plaits].choose },
-                \drone, { [\rings, \passersby, \molly].choose },
-                \harmonic, { [\rings, \plaits, \molly].choose },
-                { [\plaits, \rings, \fold, \passersby].choose }
-            );
-        });
-        if(enginePreference != \vcv and: { materials.select({ |source| source != \vcv }).isEmpty }, {
-            materials[0] = switch(modifier,
-                \percussive, { [\plaits, \plaits, \rings, \rings, \passersby, \fold].choose },
-                \chaos, { [\fold, \passersby, \plaits].choose },
-                \drone, { [\rings, \passersby, \molly].choose },
-                \harmonic, { [\rings, \plaits, \molly].choose },
-                { [\plaits, \rings, \fold, \passersby].choose }
-            );
         });
         cpuClass = if(fx == \clouds, {
             \heavy;
@@ -1570,7 +1522,7 @@
                 });
             });
         });
-        sourceEngine = if(enginePreference.notNil and: { materials.includes(enginePreference) }, { enginePreference }, { \any });
+        sourceEngine = enginePreference ? \any;
         lane = (
             index: index,
             slot: index,
@@ -1805,18 +1757,6 @@
                     \envDecay, r[\envDecay] * decayScale, \envRelease, r[\envRelease] * if(isDrone, { 1.4 }, { 1.0 }),
                     \amp, lane[\amp] * accent * (if(isPerc, { self[\rand].value(self, 0.85, 1.35) }, { if(isChaos, { self[\rand].value(self, 0.25, 1.55) }, { self[\rand].value(self, 0.70, 1.25) }) })),
                     \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.65 }), if(isChaos, { 0.95 }, { 0.65 })) + panBias).clip(-1, 1),
-                    \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
-                ]);
-            };
-            if(source == \fold) {
-                Synth.head(lane[\group], \eapLaneFoldNote, [
-                    \out, lane[\sourceBus].index, \freq, pitch.midicps,
-                    \fold, if(isPerc, { self[\rand].value(self, 0.20, 1.15) }, { if(isChaos, { self[\rand].value(self, 0.05, 5.5) }, { self[\rand].value(self, 0.25, 2.8) }) }),
-                    \fm, if(isPerc, { self[\rand].value(self, 0.0, 0.24) }, { if(isChaos, { self[\rand].value(self, 0.0, 1.4) }, { self[\rand].value(self, 0.02, 0.60) }) }),
-                    \cutoff, if(isPerc, { self[\exprand].value(self, 650, 5200) }, { if(isChaos, { self[\exprand].value(self, 80, 16000) }, { self[\exprand].value(self, 450, 9000) }) }),
-                    \decay, (if(isPerc, { self[\exprand].value(self, 0.07, 0.45) }, { if(isChaos, { self[\exprand].value(self, 0.006, 3.8) }, { self[\exprand].value(self, 0.10, 2.4) }) })) * decayScale * sustainScale,
-                    \amp, lane[\amp] * accent * (if(isPerc, { 0.72 }, { if(isChaos, { self[\rand].value(self, 0.35, 1.2) }, { 0.75 }) })),
-                    \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.70 }), if(isChaos, { 0.95 }, { 0.70 })) + panBias).clip(-1, 1),
                     \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
