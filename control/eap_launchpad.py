@@ -489,6 +489,8 @@ def send_slot_generate(
     held_for: float,
 ) -> bool:
     modifier = modifier_for_pad(pad, held_modifier_cc)
+    if modifier == 0:
+        return False
     slot = slot_for_note(pad.note)
     print(
         f"eap-launchpad: generate slot={slot} modifier={modifier} held={held_for:.2f}s",
@@ -506,6 +508,10 @@ def maybe_generate_on_hold(
     held_modifier_cc: int | None,
     osc_sock: socket.socket,
 ) -> None:
+    modifier = active_modifier_index(held_modifier_cc)
+    if modifier == 0:
+        return
+
     now = time.monotonic()
     for pad in pads.values():
         if pad.pressed_at is None or pad.generation_sent:
@@ -545,11 +551,11 @@ def handle_release(
         return
 
     if held_for >= LONG_PRESS_SECONDS:
-        send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for)
+        if not send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for):
+            flash_modifier_required(pad)
     elif pad.state == STATE_BLANK:
-        # Short tap is always an authoritative SC-side toggle. If the local pad
-        # state is stale, this unmutes the existing scene instead of replacing it.
-        send_slot_osc(osc_sock, slot, 0, modifier)
+        # Short taps never create scenes. SC may still unmute if local state is stale.
+        send_slot_osc(osc_sock, slot, 0, 0)
         wait_slot_replies(osc_sock, pads)
     else:
         # Mute / unmute only — never pass modifier on toggle.

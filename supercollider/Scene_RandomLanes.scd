@@ -2451,49 +2451,51 @@
         var action;
         var lane;
         if(modifier.isNil, {
-            modifier = self[\soundModifierSymbols].choose;
-            ("EAP slot " ++ index ++ " generation using random modifier=" ++ modifier).postln;
-        });
-        adaptive = self[\adaptiveContextForSlot].value(self, index, modifier);
-        action = if(oldLane.notNil and: { oldLane[\state] != \blank }, { \regenerate }, { \generate });
-        if(oldLane.notNil) {
-            self[\stopLane].value(self, oldLane, \blank);
-            self[\lanes].remove(oldLane);
-        };
-        activeTotal = total ? (self[\activeCount].value(self) + 1).clip(1, self[\maxScenes]);
-        self[\cloudLaneIndex] = if(activeTotal >= 5 and: { self[\hasActiveCloud].value(self).not }, {
-            [0, index].choose;
+            ("EAP slot " ++ index ++ " generation ignored: modifier required").postln;
+            0;
         }, {
-            nil;
+            adaptive = self[\adaptiveContextForSlot].value(self, index, modifier);
+            action = if(oldLane.notNil and: { oldLane[\state] != \blank }, { \regenerate }, { \generate });
+            if(oldLane.notNil) {
+                self[\stopLane].value(self, oldLane, \blank);
+                self[\lanes].remove(oldLane);
+            };
+            activeTotal = total ? (self[\activeCount].value(self) + 1).clip(1, self[\maxScenes]);
+            self[\cloudLaneIndex] = if(activeTotal >= 5 and: { self[\hasActiveCloud].value(self).not }, {
+                [0, index].choose;
+            }, {
+                nil;
+            });
+            lane = self[\randomLane].value(self, index, activeTotal, modifier, adaptive);
+            self[\applyPerformanceState].value(self, lane, performanceState);
+            self[\slots][index - 1] = lane;
+            self[\startLane].value(self, lane);
+            self[\lanes].add(lane);
+            self[\syncLoad].value(self);
+            self[\recordAdaptiveScene].value(self, lane, action);
+            ("EAP slot " ++ index ++ " generated materials=" ++ lane[\materials].asString ++
+                " fx=" ++ lane[\fx] ++ " modifier=" ++ (lane[\soundModifier] ? \default)
+                ++ " sourceEngine=" ++ (self[\sourceEnginePreference] ? \any)
+                ++ " rhythm=" ++ (lane[\rhythmProfile] ? \unknown)
+                ++ " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0)
+                ++ " adaptiveRegister=" ++ ((lane[\adaptive] ? ())[\registerBand] ? \mid)
+                ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
+                ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
+                ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
+                ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
+                ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
+                ++ " transpose=" ++ (lane[\transpose] ? 0)
+                ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
+            1;
         });
-        lane = self[\randomLane].value(self, index, activeTotal, modifier, adaptive);
-        self[\applyPerformanceState].value(self, lane, performanceState);
-        self[\slots][index - 1] = lane;
-        self[\startLane].value(self, lane);
-        self[\lanes].add(lane);
-        self[\syncLoad].value(self);
-        self[\recordAdaptiveScene].value(self, lane, action);
-        ("EAP slot " ++ index ++ " generated materials=" ++ lane[\materials].asString ++
-            " fx=" ++ lane[\fx] ++ " modifier=" ++ (lane[\soundModifier] ? \default)
-            ++ " sourceEngine=" ++ (self[\sourceEnginePreference] ? \any)
-            ++ " rhythm=" ++ (lane[\rhythmProfile] ? \unknown)
-            ++ " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0)
-            ++ " adaptiveRegister=" ++ ((lane[\adaptive] ? ())[\registerBand] ? \mid)
-            ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
-            ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
-            ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
-            ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
-            ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
-            ++ " transpose=" ++ (lane[\transpose] ? 0)
-            ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
-        1;
     };
 
     ~toggleSlot = { |self, slot, modifier = nil|
         var index = slot.asInteger.clip(1, self[\maxScenes]);
         var lane = self[\slots][index - 1];
         var result = if(lane.isNil or: { lane[\state] == \blank }, {
-            self[\generateSlot].value(self, index, nil, modifier);
+            ("EAP slot " ++ index ++ " toggle ignored: blank slot").postln;
+            0;
         }, {
             if(lane[\state] == \active, {
                 self[\stopLane].value(self, lane, \muted);
