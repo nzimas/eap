@@ -1395,6 +1395,30 @@ def _profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Random, 
 PROFILE_BUILDERS = _profile_builders()
 
 
+def _event_cap(cfg: LaneCfg, profile: str) -> Optional[int]:
+    modifier = str(cfg.get("modifier", "harmonic"))
+    material = str(cfg.get("material", ""))
+    if modifier != "chaos":
+        return None
+    base = 12
+    if material == "rings":
+        base = 8
+    elif material in {"plaits", "molly"}:
+        base = 10
+    if profile in {"deBruijnGlitch", "grainCloud", "logisticSwarm", "microCluster"}:
+        base = max(5, base - 2)
+    return base
+
+
+def _thin_events(events: List[Any], cap: int) -> List[Any]:
+    if cap <= 0 or len(events) <= cap:
+        return events
+    if cap == 1:
+        return [events[0]]
+    span = (len(events) - 1) / (cap - 1)
+    return [events[round(index * span)] for index in range(cap)]
+
+
 def build_lane_pattern(p: Any, cfg: LaneCfg, composition: Any) -> None:
     """Populate one lane cycle using Subsequence and emit EAP OSC triggers."""
     slot = int(cfg["slot"])
@@ -1417,6 +1441,17 @@ def build_lane_pattern(p: Any, cfg: LaneCfg, composition: Any) -> None:
     except Exception:
         LOG.exception("lane %s profile %s failed; falling back to euclid", slot, profile)
         PROFILE_BUILDERS["euclid"](p, effective, rng, composition)
+
+    cap = _event_cap(effective, profile)
+    if cap is not None and len(p._pattern.osc_events) > cap:
+        LOG.warning(
+            "lane %s profile %s emitted %s events; thinning to %s",
+            slot,
+            profile,
+            len(p._pattern.osc_events),
+            cap,
+        )
+        p._pattern.osc_events = _thin_events(p._pattern.osc_events, cap)
 
     if not p._pattern.osc_events:
         LOG.warning("lane %s profile %s produced no events; adding anchored hit", slot, profile)

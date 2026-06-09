@@ -1487,6 +1487,12 @@
                 materials = materials.reject({ |source| source == \molly });
             });
         });
+        if(modifier == \chaos and: { materials.includes(\rings) }, {
+            densitySkew = densitySkew.min(0.62);
+            restProb = restProb.max(0.24);
+            rings[\poly] = 1;
+            rings[\damp] = rings[\damp].max(0.42);
+        });
         cpuClass = if(fx == \clouds, {
             \heavy;
         }, {
