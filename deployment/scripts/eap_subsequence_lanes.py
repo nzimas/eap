@@ -1418,6 +1418,26 @@ def build_lane_pattern(p: Any, cfg: LaneCfg, composition: Any) -> None:
         LOG.exception("lane %s profile %s failed; falling back to euclid", slot, profile)
         PROFILE_BUILDERS["euclid"](p, effective, rng, composition)
 
+    if not p._pattern.osc_events:
+        LOG.warning("lane %s profile %s produced no events; adding anchored hit", slot, profile)
+        anchor_decay = {
+            "percussive": 0.85,
+            "drone": 5.5,
+            "chaos": 0.55,
+        }.get(str(effective.get("modifier", "harmonic")), 1.15)
+        _emit_hit(
+            p,
+            slot,
+            0,
+            effective,
+            composition,
+            rng,
+            accent_scale=1.0,
+            decay_scale=anchor_decay,
+            sustain=1 if effective.get("modifier") == "drone" else 0,
+            skip_density=True,
+        )
+
     composition.data[f"lane{slot}_cycle"] = p.cycle
 
 

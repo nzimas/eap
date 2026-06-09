@@ -46,7 +46,7 @@ At scene creation, EAP chooses a cached bank/program and applies only tiny opera
 
 Vital/Vitalium is treated as a realtime external JACK/MIDI instrument, not as an offline renderer. EAP hosts the installed Vitalium LV2 plugin with `jalv`, chooses an installed Vitalium preset, applies small modifier-specific control tweaks, routes JACK audio back into SuperCollider inputs 3/4, and sends live MIDI notes from the same Pattern sequencer that drives the internal engines.
 
-Use `eap-install-vitalium` on the Pi to build and install Vitalium LV2 plus the `jalv` host and MIDI bridge dependencies. Vital remains visible on the engine selector, but runtime launch is gated behind `EAP_ENABLE_VITAL=1` because the current Pi/JACK profile xruns with live Vitalium enabled.
+Use `eap-install-vitalium` on the Pi to build and install Vitalium LV2 plus the `jalv` host and MIDI bridge dependencies. Vital remains visible on the engine selector and is started/routed on demand when a generated scene chooses it.
 
 On the Scales / Root Note page, engine row 4 maps left to right as: Any, Plaits, Rings, Passersby, Molly, Dexed, Vital/Vitalium. VCV Rack infrastructure remains in the stack, but VCV is not currently exposed as a selectable scene engine.
 

@@ -9,6 +9,7 @@ User=we
 Environment=HOME=/home/we
 Environment=XDG_CONFIG_HOME=/home/we/.config
 Environment=XDG_DATA_HOME=/home/we/.local/share
+Environment=EAP_ENABLE_DEXED=1
 ExecStart=/usr/local/bin/eap-start-dexed
 Restart=on-failure
 RestartSec=3

@@ -19,6 +19,7 @@
     ~gridFxQueue = List.new;
     ~gridFxProcessing = false;
     ~externalInputSynth = nil;
+    ~externalInputHoldUntil = 0;
     ~reverbValues = nil;
     ~masterValues = nil;
     ~dexedMidi = nil;
@@ -723,9 +724,15 @@
         self[\dexedAvailable];
     };
 
+    ~ensureDexed = { |self|
+        var result = "sh -lc 'EAP_ENABLE_DEXED=1 /usr/local/bin/eap-ensure-dexed 25 0.25 2>&1'".unixCmdGetStdOut.stripWhiteSpace;
+        if(result.notEmpty, { ("EAP " ++ result).postln; });
+        self[\refreshDexed].value(self);
+    };
+
     ~sendDexedNote = { |self, channel = 0, note = 60, velocity = 80, duration = 0.6|
         var midi = self[\dexedMidi];
-        if(midi.isNil, { self[\refreshDexed].value(self); midi = self[\dexedMidi]; });
+        if(midi.isNil, { self[\ensureDexed].value(self); midi = self[\dexedMidi]; });
         if(midi.notNil, {
             var chan = channel.asInteger.clip(0, 15);
             var pitch = note.asInteger.clip(0, 127);
@@ -739,16 +746,26 @@
     };
 
     ~loadDexedPatch = { |self, seed = 1, channel = 0, profile = nil|
-        var cmd = "/usr/local/bin/eap-dexed-patch --seed " ++ seed.asInteger.asString
+        var cmd;
+        var result;
+        self[\ensureDexed].value(self);
+        cmd = "sh -lc " ++ ("EAP_ENABLE_DEXED=1 /usr/local/bin/eap-dexed-patch --seed " ++ seed.asInteger.asString
             ++ " --channel " ++ channel.asInteger.clip(0, 15).asString
-            ++ if(profile.notNil, { " --profile " ++ profile.asSymbol.asString }, { "" });
-        var result = cmd.unixCmdGetStdOut.stripWhiteSpace;
+            ++ if(profile.notNil, { " --profile " ++ profile.asSymbol.asString }, { "" })).quote;
+        result = cmd.unixCmdGetStdOut.stripWhiteSpace;
         if(result.notEmpty, { ("EAP " ++ result).postln; });
+        self[\refreshDexed].value(self);
         result;
     };
 
     ~vitalRuntimeAvailable = { |self|
-        "sh -lc '[ \"${EAP_ENABLE_VITAL:-0}\" = \"1\" ] && command -v jalv >/dev/null 2>&1 && lv2ls 2>/dev/null | grep -qx \"urn:distrho:vitalium\" && echo yes'".unixCmdGetStdOut.contains("yes");
+        "sh -lc 'command -v jalv >/dev/null 2>&1 && command -v eap-vital-preset >/dev/null 2>&1 && lv2ls 2>/dev/null | grep -qx \"urn:distrho:vitalium\" && echo yes'".unixCmdGetStdOut.contains("yes");
+    };
+
+    ~ensureVital = { |self|
+        var result = "sh -lc 'EAP_ENABLE_VITAL=1 /usr/local/bin/eap-ensure-vital 18 0.25 2>&1'".unixCmdGetStdOut.stripWhiteSpace;
+        if(result.notEmpty, { ("EAP " ++ result).postln; });
+        self[\refreshVital].value(self);
     };
 
     ~refreshVital = { |self|
@@ -792,19 +809,22 @@
     };
 
     ~loadVitalPatch = { |self, seed = 1, slot = 1, profile = nil|
-        var cmd = "/usr/local/bin/eap-vital-preset --seed " ++ seed.asInteger.asString
+        var cmd;
+        var result;
+        self[\ensureVital].value(self);
+        cmd = "sh -lc " ++ ("EAP_ENABLE_VITAL=1 /usr/local/bin/eap-vital-preset --seed " ++ seed.asInteger.asString
             ++ " --slot " ++ slot.asInteger.clip(1, self[\maxScenes]).asString
-            ++ " --profile " ++ (profile ? \default).asSymbol.asString;
-        var result = cmd.unixCmdGetStdOut.stripWhiteSpace;
+            ++ " --profile " ++ (profile ? \default).asSymbol.asString).quote;
+        result = cmd.unixCmdGetStdOut.stripWhiteSpace;
         if(result.notEmpty, { ("EAP " ++ result).postln; });
-        "/usr/local/bin/eap-connect-vital-jack 30 0.25".unixCmdGetStdOut;
+        "sh -lc 'EAP_ENABLE_VITAL=1 /usr/local/bin/eap-connect-vital-jack 30 0.25'".unixCmdGetStdOut;
         self[\refreshVital].value(self);
         result;
     };
 
     ~sendVitalNote = { |self, note = 60, velocity = 80, duration = 0.6|
         var midi = self[\vitalMidi];
-        if(midi.isNil, { self[\refreshVital].value(self); midi = self[\vitalMidi]; });
+        if(midi.isNil, { self[\ensureVital].value(self); midi = self[\vitalMidi]; });
         if(midi.notNil, {
             var pitch = note.asInteger.clip(0, 127);
             var vel = velocity.asInteger.clip(1, 127);
@@ -833,10 +853,14 @@
 
     ~pulseExternalInput = { |self, duration = 0.5|
         if(self[\externalInputSynth].notNil, {
+            var holdUntil = Main.elapsedTime + duration.asFloat.clip(0.04, 12.0) + 0.08;
+            self[\externalInputHoldUntil] = (self[\externalInputHoldUntil] ? 0).max(holdUntil);
             self[\externalInputSynth].set(\amp, 0.82, \fadeTime, 0.02);
             Routine({
                 duration.asFloat.clip(0.04, 12.0).wait;
-                self[\muteExternalInput].value(self);
+                if(Main.elapsedTime >= ((self[\externalInputHoldUntil] ? 0) - 0.001), {
+                    self[\muteExternalInput].value(self);
+                });
             }).play(SystemClock);
         });
     };
@@ -1213,7 +1237,7 @@
         );
         var dexedPatchSeed = dexed[\patchSeed];
         var dexedPatchInfo = "";
-        var dexedAvailable = if(enginePreference == \dexed, { self[\refreshDexed].value(self) }, { self[\refreshDexed].value(self) });
+        var dexedAvailable = self[\refreshDexed].value(self);
         var sourceEngine = \any;
         var freshPool;
         var avoidPool;
@@ -1242,21 +1266,17 @@
         var vcvPatchInfo = "";
         var vcvAvailable = false;
         var cpuClass = \normal;
-        if(dexedAvailable, {
+        if(dexedAvailable or: { enginePreference == \dexed }, {
             materialPool = materialPool ++ [\dexed, \dexed];
         });
-        if(vitalAvailable, {
+        if(vitalAvailable or: { enginePreference == \vital }, {
             materialPool = materialPool ++ [\vital, \vital];
-        });
-        if(vcvAvailable, {
-            materialPool = materialPool ++ [\vcv, \vcv];
         });
         switch(modifier,
             \percussive, {
                 materialPool = [\plaits, \plaits, \plaits, \plaits, \rings, \rings, \rings, \passersby, \passersby];
-                if(dexedAvailable, { materialPool = materialPool ++ [\dexed, \dexed]; });
-                if(vitalAvailable, { materialPool = materialPool ++ [\vital]; });
-                if(vcvAvailable, { materialPool = materialPool ++ [\vcv]; });
+                if(dexedAvailable or: { enginePreference == \dexed }, { materialPool = materialPool ++ [\dexed, \dexed]; });
+                if(vitalAvailable or: { enginePreference == \vital }, { materialPool = materialPool ++ [\vital]; });
                 register = [[36, 60], [38, 64], [43, 67], [48, 72]].choose;
                 minGap = minGap * 0.55;
                 gap = self[\rand].value(self, 0.09, 0.42);
@@ -1457,22 +1477,7 @@
             });
         });
         if(enginePreference.notNil, {
-            materialPool = if(enginePreference == \dexed and: { dexedAvailable.not }, {
-                "EAP selected engine dexed unavailable; no fallback source".postln;
-                [];
-            }, {
-                if(enginePreference == \vital and: { vitalAvailable.not }, {
-                    "EAP selected engine vital unavailable; no fallback source".postln;
-                    [];
-                }, {
-                    if(enginePreference == \vcv and: { vcvAvailable.not }, {
-                        "EAP selected engine vcv unavailable; no fallback source".postln;
-                        [];
-                    }, {
-                        [enginePreference];
-                    });
-                });
-            });
+            materialPool = [enginePreference];
         });
         materials = if(materialPool.isEmpty, { [] }, { [materialPool.choose] });
         if(enginePreference.isNil and: { (modifier != \drone) and: { modifier != \harmonic } }, {
@@ -2446,51 +2451,49 @@
         var action;
         var lane;
         if(modifier.isNil, {
-            ("EAP slot " ++ index ++ " generation ignored: modifier required").postln;
-            0;
-        }, {
-            adaptive = self[\adaptiveContextForSlot].value(self, index, modifier);
-            action = if(oldLane.notNil and: { oldLane[\state] != \blank }, { \regenerate }, { \generate });
-            if(oldLane.notNil) {
-                self[\stopLane].value(self, oldLane, \blank);
-                self[\lanes].remove(oldLane);
-            };
-            activeTotal = total ? (self[\activeCount].value(self) + 1).clip(1, self[\maxScenes]);
-            self[\cloudLaneIndex] = if(activeTotal >= 5 and: { self[\hasActiveCloud].value(self).not }, {
-                [0, index].choose;
-            }, {
-                nil;
-            });
-            lane = self[\randomLane].value(self, index, activeTotal, modifier, adaptive);
-            self[\applyPerformanceState].value(self, lane, performanceState);
-            self[\slots][index - 1] = lane;
-            self[\startLane].value(self, lane);
-            self[\lanes].add(lane);
-            self[\syncLoad].value(self);
-            self[\recordAdaptiveScene].value(self, lane, action);
-            ("EAP slot " ++ index ++ " generated materials=" ++ lane[\materials].asString ++
-                " fx=" ++ lane[\fx] ++ " modifier=" ++ (lane[\soundModifier] ? \default)
-                ++ " sourceEngine=" ++ (self[\sourceEnginePreference] ? \any)
-                ++ " rhythm=" ++ (lane[\rhythmProfile] ? \unknown)
-                ++ " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0)
-                ++ " adaptiveRegister=" ++ ((lane[\adaptive] ? ())[\registerBand] ? \mid)
-                ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
-                ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
-                ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
-                ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
-                ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
-                ++ " transpose=" ++ (lane[\transpose] ? 0)
-                ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
-            1;
+            modifier = self[\soundModifierSymbols].choose;
+            ("EAP slot " ++ index ++ " generation using random modifier=" ++ modifier).postln;
         });
+        adaptive = self[\adaptiveContextForSlot].value(self, index, modifier);
+        action = if(oldLane.notNil and: { oldLane[\state] != \blank }, { \regenerate }, { \generate });
+        if(oldLane.notNil) {
+            self[\stopLane].value(self, oldLane, \blank);
+            self[\lanes].remove(oldLane);
+        };
+        activeTotal = total ? (self[\activeCount].value(self) + 1).clip(1, self[\maxScenes]);
+        self[\cloudLaneIndex] = if(activeTotal >= 5 and: { self[\hasActiveCloud].value(self).not }, {
+            [0, index].choose;
+        }, {
+            nil;
+        });
+        lane = self[\randomLane].value(self, index, activeTotal, modifier, adaptive);
+        self[\applyPerformanceState].value(self, lane, performanceState);
+        self[\slots][index - 1] = lane;
+        self[\startLane].value(self, lane);
+        self[\lanes].add(lane);
+        self[\syncLoad].value(self);
+        self[\recordAdaptiveScene].value(self, lane, action);
+        ("EAP slot " ++ index ++ " generated materials=" ++ lane[\materials].asString ++
+            " fx=" ++ lane[\fx] ++ " modifier=" ++ (lane[\soundModifier] ? \default)
+            ++ " sourceEngine=" ++ (self[\sourceEnginePreference] ? \any)
+            ++ " rhythm=" ++ (lane[\rhythmProfile] ? \unknown)
+            ++ " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0)
+            ++ " adaptiveRegister=" ++ ((lane[\adaptive] ? ())[\registerBand] ? \mid)
+            ++ " level=" ++ (lane[\level] ? 1.0).round(0.001)
+            ++ " pan=" ++ (lane[\pan] ? 0.0).round(0.001)
+            ++ " density=" ++ (lane[\density] ? 1.0).round(0.001)
+            ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
+            ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
+            ++ " transpose=" ++ (lane[\transpose] ? 0)
+            ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
+        1;
     };
 
     ~toggleSlot = { |self, slot, modifier = nil|
         var index = slot.asInteger.clip(1, self[\maxScenes]);
         var lane = self[\slots][index - 1];
         var result = if(lane.isNil or: { lane[\state] == \blank }, {
-            ("EAP slot " ++ index ++ " toggle ignored: blank slot (long-press with modifier to generate)").postln;
-            0;
+            self[\generateSlot].value(self, index, nil, modifier);
         }, {
             if(lane[\state] == \active, {
                 self[\stopLane].value(self, lane, \muted);
@@ -2509,29 +2512,26 @@
 
     ~seed = { |self, count = 1, modifier = nil|
         var n = count.asInteger.clip(1, self[\maxScenes]);
-        if(modifier.isNil, {
-            "EAP random scene seed ignored: modifier required".postln;
-            0;
-        }, {
-            self[\clear].value(self);
-            self[\cloudLaneIndex] = if(n >= 5, { [0, rrand(1, n)].choose }, { nil });
-            n.do({ |index|
-                var adaptive = self[\adaptiveContextForSlot].value(self, index + 1, modifier);
-                var lane = self[\randomLane].value(self, index + 1, n, modifier, adaptive);
-                lane[\state] = \muted;
-                self[\startLane].value(self, lane);
-                self[\lanes].add(lane);
-                self[\slots][index] = lane;
-                self[\recordAdaptiveScene].value(self, lane, \seed);
-                ("EAP random lane " ++ (index + 1) ++ "/" ++ n ++
-                    " materials=" ++ lane[\materials].asString ++
-                    " fx=" ++ lane[\fx] ++
-                    " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0) ++
-                    " plaits=" ++ lane[\plaitsModels].asString).postln;
-            });
-            ("EAP random scene set active: " ++ n ++ " independent lanes").postln;
-            1;
+        self[\clear].value(self);
+        self[\cloudLaneIndex] = if(n >= 5, { [0, rrand(1, n)].choose }, { nil });
+        n.do({ |index|
+            var laneModifier = modifier ? self[\soundModifierSymbols].choose;
+            var adaptive = self[\adaptiveContextForSlot].value(self, index + 1, laneModifier);
+            var lane = self[\randomLane].value(self, index + 1, n, laneModifier, adaptive);
+            lane[\state] = \muted;
+            self[\startLane].value(self, lane);
+            self[\lanes].add(lane);
+            self[\slots][index] = lane;
+            self[\recordAdaptiveScene].value(self, lane, \seed);
+            ("EAP random lane " ++ (index + 1) ++ "/" ++ n ++
+                " materials=" ++ lane[\materials].asString ++
+                " fx=" ++ lane[\fx] ++
+                " modifier=" ++ (lane[\soundModifier] ? \default) ++
+                " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0) ++
+                " plaits=" ++ lane[\plaitsModels].asString).postln;
         });
+        ("EAP random scene set active: " ++ n ++ " independent lanes").postln;
+        1;
     };
 
     ~start = { |self|

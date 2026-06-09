@@ -11,6 +11,7 @@ Environment=HOME=/home/we
 Environment=XDG_CONFIG_HOME=/home/we/.config
 Environment=XDG_DATA_HOME=/home/we/.local/share
 Environment=JACK_NO_AUDIO_RESERVATION=1
+Environment=EAP_ENABLE_VITAL=1
 ExecStart=/usr/local/bin/eap-start-vital
 Restart=on-failure
 RestartSec=3

@@ -80,9 +80,7 @@ for script in "$REMOTE_ROOT/deployment/scripts/"*.py; do
 done
 for script in "$REMOTE_ROOT/deployment/scripts/"*.sh; do
     name="$(basename "$script" .sh)"
-    if [[ ! -x "/usr/local/bin/$name" ]]; then
-        run_sudo install -m 0755 "$script" "/usr/local/bin/$name"
-    fi
+    run_sudo install -m 0755 "$script" "/usr/local/bin/$name"
 done
 
 tmp_wrapper="$(mktemp)"
