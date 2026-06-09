@@ -18,7 +18,7 @@ EnvironmentFile=-/etc/default/eap-vcv
 Environment=EAP_VCV_MIDI_DEVICE=14:0
 LimitRTPRIO=95
 LimitMEMLOCK=infinity
-ExecStart=/usr/bin/sclang -D /opt/electroacoustic-playground/supercollider/boot.scd
+ExecStart=/bin/bash /opt/electroacoustic-playground/deployment/scripts/eap-supercollider-watchdog.sh
 Restart=on-failure
 RestartSec=2
 

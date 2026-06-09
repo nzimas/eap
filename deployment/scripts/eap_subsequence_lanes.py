@@ -281,6 +281,12 @@ def _step_pulse(p: Any, step_index: int) -> int:
     return int(beat * subsequence.constants.MIDI_QUARTER_NOTE)
 
 
+def _rotate(values: List[int], offset: int) -> List[int]:
+    if not values:
+        return values
+    return su.roll(values, offset, len(values))
+
+
 def _grid_hits(p: Any, cfg: LaneCfg, composition: Any, rng: random.Random, pulses: int) -> None:
     slot = int(cfg["slot"])
     steps = p.grid
@@ -479,7 +485,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         else:
             grid = grid[: p.grid]
         offset = rng.randint(0, max(0, len(grid) - 1))
-        grid = su.rotate(grid, offset)
+        grid = _rotate(grid, offset)
         _emit_binary_grid(p, slot, cfg, composition, rng, grid)
 
     def fibonacci(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
@@ -572,7 +578,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         slot = int(cfg["slot"])
         pattern = su.thue_morse(p.grid)
         offset = rng.randint(0, max(0, p.grid - 1))
-        pattern = su.rotate(pattern, offset)
+        pattern = _rotate(pattern, offset)
         _emit_binary_grid(
             p,
             slot,
@@ -741,7 +747,7 @@ def _percussive_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, rand
         hits = _euclid_hits(p, rng)
         grid = su.generate_euclidean_sequence(p.grid, hits)
         shift = (p.cycle * rng.randint(1, 5) + int(cfg["slot"])) % max(1, p.grid)
-        drifted = su.rotate(grid, shift)
+        drifted = _rotate(grid, shift)
         _emit_binary_grid(p, slot, cfg, composition, rng, drifted)
 
     def ghostGrid(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
@@ -872,7 +878,7 @@ def _chaos_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Ra
     def glitch(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
         slot = int(cfg["slot"])
         morse = su.thue_morse(p.grid)
-        morse = su.rotate(morse, rng.randint(0, max(0, p.grid - 1)))
+        morse = _rotate(morse, rng.randint(0, max(0, p.grid - 1)))
         for idx, hit in enumerate(morse[: p.grid]):
             if hit and rng.random() < rng.uniform(0.42, 0.88):
                 pulse = _chaos_pulse(p, idx * rng.choice([0.25, 0.5, 0.75, 1.0, 1.33, 1.66, 2.0]), rng)
@@ -1017,7 +1023,7 @@ def _chaos_profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Ra
         order = rng.choice([3, 4, 5])
         stream = su.de_bruijn(2, order)
         stream = (stream * ((p.grid // len(stream)) + 2))[: p.grid]
-        stream = su.rotate(stream, rng.randint(0, max(0, p.grid - 1)))
+        stream = _rotate(stream, rng.randint(0, max(0, p.grid - 1)))
         for idx, hit in enumerate(stream):
             if hit and rng.random() < rng.uniform(0.38, 0.82):
                 pulse = _chaos_pulse(p, idx * rng.uniform(0.4, 1.6), rng)
@@ -1162,7 +1168,7 @@ def _profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Random, 
             slot = int(cfg["slot"])
             hits = max(3, min(p.grid - 1, int(p.grid * rng.uniform(0.30, 0.64))))
             grid = su.generate_euclidean_sequence(p.grid, hits)
-            grid = su.rotate(grid, rng.randint(0, max(0, p.grid - 1)))
+            grid = _rotate(grid, rng.randint(0, max(0, p.grid - 1)))
             for step, hit in enumerate(grid):
                 if hit:
                     _emit_percussive_step(p, slot, cfg, composition, rng, step, 1.15 if step % 4 == 0 else 0.92, "wood")
@@ -1222,7 +1228,7 @@ def _profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Random, 
         hits = max(2, period // 2 + rng.randint(-1, 1))
         folded = su.generate_euclidean_sequence(period, min(period - 1, hits))
         grid = [folded[step % period] for step in range(p.grid)]
-        grid = su.rotate(grid, rng.randint(0, max(0, p.grid - 1)))
+        grid = _rotate(grid, rng.randint(0, max(0, p.grid - 1)))
         _emit_binary_grid(p, slot, cfg, composition, rng, grid)
 
     def ratioLattice(p: Any, cfg: LaneCfg, rng: random.Random, composition: Any) -> None:
