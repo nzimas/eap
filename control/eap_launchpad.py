@@ -35,6 +35,8 @@ OSC_PORT = int(os.environ.get("EAP_OSC_PORT", "57120"))
 OSC_REPLY_PORT = int(os.environ.get("EAP_OSC_REPLY_PORT", "57121"))
 SLOTS_STATE_PATH = b"/eap/slots/state\x00"
 SLOTS_STATE_TAGS = b",iiiiiiii\x00"
+SLOTS_DENSITY_PATH = b"/eap/slots/density\x00"
+SLOTS_DENSITY_TAGS = b",iiiiiiii\x00"
 SESSION_INDEX_PATH = os.environ.get(
     "EAP_SESSION_INDEX",
     "/home/we/.local/share/eap-launchpad/sessions.json",
@@ -169,10 +171,28 @@ def parse_slots_state_osc(data: bytes) -> list[int] | None:
     return list(struct.unpack(">8i", data[offset : offset + 32]))
 
 
+def parse_slots_density_osc(data: bytes) -> list[int] | None:
+    if SLOTS_DENSITY_PATH not in data:
+        return None
+    tag_index = data.find(SLOTS_DENSITY_TAGS)
+    if tag_index < 0:
+        return None
+    offset = tag_index + len(SLOTS_DENSITY_TAGS)
+    offset = ((offset + 3) // 4) * 4
+    if len(data) < offset + 32:
+        return None
+    return list(struct.unpack(">8i", data[offset : offset + 32]))
+
+
 def apply_slot_states(pads: dict[int, Pad], states: list[int]) -> None:
     for note, state in zip(BOTTOM_ROW_NOTES, states[: len(BOTTOM_ROW_NOTES)]):
         if state in (STATE_BLANK, STATE_ACTIVE, STATE_MUTED):
             pads[note].state = state
+
+
+def apply_slot_densities(pads: dict[int, Pad], densities: list[int]) -> None:
+    for note, density in zip(BOTTOM_ROW_NOTES, densities[: len(BOTTOM_ROW_NOTES)]):
+        pads[note].density = max(0, min(int(density), 127))
 
 
 def drain_slot_replies(osc_sock: socket.socket, pads: dict[int, Pad]) -> bool:
@@ -183,9 +203,13 @@ def drain_slot_replies(osc_sock: socket.socket, pads: dict[int, Pad]) -> bool:
         except BlockingIOError:
             break
         states = parse_slots_state_osc(data)
-        if states is None:
+        densities = parse_slots_density_osc(data)
+        if states is None and densities is None:
             continue
-        apply_slot_states(pads, states)
+        if states is not None:
+            apply_slot_states(pads, states)
+        if densities is not None:
+            apply_slot_densities(pads, densities)
         for pad in pads.values():
             paint(pad)
         updated = True

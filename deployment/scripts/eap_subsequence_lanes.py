@@ -1419,6 +1419,55 @@ def _thin_events(events: List[Any], cap: int) -> List[Any]:
     return [events[round(index * span)] for index in range(cap)]
 
 
+def _event_floor(cfg: LaneCfg, profile: str) -> int:
+    modifier = str(cfg.get("modifier", "harmonic"))
+    density = max(0.05, min(float(cfg.get("density", 1.0)), 1.0))
+    if modifier == "percussive":
+        return max(5, min(12, round(4 + density * 8)))
+    if modifier == "chaos":
+        material = str(cfg.get("material", ""))
+        upper = 7 if material == "rings" else 9
+        if profile in {"sparseBolt", "spectralDrift"}:
+            upper = max(5, upper - 1)
+        return max(4, min(upper, round(3 + density * 6)))
+    if modifier == "drone":
+        return max(2, min(4, round(1 + density * 4)))
+    return max(4, min(8, round(3 + density * 6)))
+
+
+def _add_floor_hits(
+    p: Any,
+    cfg: LaneCfg,
+    composition: Any,
+    rng: random.Random,
+    target: int,
+) -> None:
+    slot = int(cfg["slot"])
+    modifier = str(cfg.get("modifier", "harmonic"))
+    cap = max(target, 1)
+    attempts = 0
+    while len(p._pattern.osc_events) < target and attempts < cap * 3:
+        step = round((attempts / max(1, cap)) * max(1, p.grid - 1))
+        step = (step + rng.randint(0, max(0, p.grid // 4))) % max(1, p.grid)
+        _emit_hit(
+            p,
+            slot,
+            _step_pulse(p, step),
+            cfg,
+            composition,
+            rng,
+            accent_scale=0.7 if modifier == "drone" else 0.9,
+            decay_scale={
+                "percussive": rng.uniform(0.55, 1.05),
+                "drone": rng.uniform(3.0, 6.5),
+                "chaos": rng.uniform(0.12, 0.9),
+            }.get(modifier, rng.uniform(0.75, 1.25)),
+            sustain=1 if modifier == "drone" else 0,
+            skip_density=True,
+        )
+        attempts += 1
+
+
 def build_lane_pattern(p: Any, cfg: LaneCfg, composition: Any) -> None:
     """Populate one lane cycle using Subsequence and emit EAP OSC triggers."""
     slot = int(cfg["slot"])
@@ -1452,6 +1501,19 @@ def build_lane_pattern(p: Any, cfg: LaneCfg, composition: Any) -> None:
             cap,
         )
         p._pattern.osc_events = _thin_events(p._pattern.osc_events, cap)
+
+    floor = _event_floor(effective, profile)
+    if cap is not None:
+        floor = min(floor, cap)
+    if len(p._pattern.osc_events) < floor:
+        LOG.warning(
+            "lane %s profile %s emitted %s events; filling to %s",
+            slot,
+            profile,
+            len(p._pattern.osc_events),
+            floor,
+        )
+        _add_floor_hits(p, effective, composition, rng, floor)
 
     if not p._pattern.osc_events:
         LOG.warning("lane %s profile %s produced no events; adding anchored hit", slot, profile)

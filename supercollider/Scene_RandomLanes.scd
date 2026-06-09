@@ -228,6 +228,14 @@
         ((lane[\density] ? 1.0) * (lane[\densitySkew] ? 1.0)).asFloat.clip(0.05, 1.0);
     };
 
+    ~displayDensityForLane = { |self, lane|
+        if(lane.isNil or: { lane[\state] == \blank }, {
+            0;
+        }, {
+            ((self[\seqDensityForLane].value(self, lane) * (1.0 - ((lane[\restProb] ? 0.12) * 0.5))).clip(0.05, 1.0) * 127).round(1).asInteger;
+        });
+    };
+
     ~syncSubsequenceLane = { |self, lane, active = true|
         var slot, addr, seed, scale, material;
         if(lane.isNil) { ^self; };
@@ -1156,6 +1164,7 @@
         var restProb = self[\rand].value(self, 0.04, 0.38);
         var volatility = self[\rand].value(self, 0.65, 1.6);
         var densitySkew = self[\rand].value(self, 0.72, maxDensity);
+        var density = self[\rand].value(self, 0.55, 0.88);
         var gap = self[\rand].value(self, minGap, 7.0);
         var rhythmProfile;
         var pulse = self[\rand].value(self, 0.1, 0.35);
@@ -1280,9 +1289,10 @@
                 register = [[36, 60], [38, 64], [43, 67], [48, 72]].choose;
                 minGap = minGap * 0.55;
                 gap = self[\rand].value(self, 0.09, 0.42);
-                restProb = self[\rand].value(self, 0.04, 0.18);
+                restProb = self[\rand].value(self, 0.02, 0.10);
                 volatility = self[\rand].value(self, 0.85, 1.65);
-                densitySkew = self[\rand].value(self, 0.72, maxDensity.max(1.20));
+                density = self[\rand].value(self, 0.72, 0.96);
+                densitySkew = self[\rand].value(self, 0.92, maxDensity.max(1.20));
                 rhythmProfile = self[\rhythmProfilesFor].value(\percussive).choose;
                 pulse = [self[\rand].value(self, 0.060, 0.095), self[\rand].value(self, 0.095, 0.145), self[\rand].value(self, 0.145, 0.205)].choose;
                 swing = [self[\rand].value(self, 0.00, 0.12), self[\rand].value(self, 0.12, 0.32), self[\rand].value(self, 0.00, 0.05)].choose;
@@ -1340,10 +1350,11 @@
                 materialPool = [\rings, \rings, \rings, \passersby, \passersby, \plaits, \molly, \molly];
                 register = [[24, 48], [28, 55], [31, 58]].choose;
                 minGap = minGap * 1.35;
-                gap = self[\rand].value(self, 1.5, 4.5);
-                restProb = self[\rand].value(self, 0.0, 0.06);
+                gap = self[\rand].value(self, 0.65, 2.2);
+                restProb = self[\rand].value(self, 0.0, 0.035);
                 volatility = self[\rand].value(self, 0.45, 0.85);
-                densitySkew = self[\rand].value(self, 0.45, 0.82);
+                density = self[\rand].value(self, 0.48, 0.78);
+                densitySkew = self[\rand].value(self, 0.78, 1.08);
                 rhythmProfile = [\pulse, \breath, \swell, \ritual].choose;
                 pulse = self[\rand].value(self, 0.35, 0.85);
                 swing = self[\rand].value(self, 0.0, 0.08);
@@ -1384,9 +1395,10 @@
                 materialPool = [\rings, \rings, \plaits, \plaits, \molly, \molly, \passersby];
                 register = [[36, 62], [40, 67], [45, 72]].choose;
                 gap = self[\rand].value(self, 0.18, 1.15);
-                restProb = self[\rand].value(self, 0.0, 0.06);
+                restProb = self[\rand].value(self, 0.0, 0.04);
                 volatility = self[\rand].value(self, 0.95, 1.55);
-                densitySkew = self[\rand].value(self, 1.0, maxDensity.max(1.35));
+                density = self[\rand].value(self, 0.62, 0.92);
+                densitySkew = self[\rand].value(self, 0.95, maxDensity.max(1.25));
                 rhythmProfile = [\arp, \motif, \pulseHarm, \hymn].choose;
                 pulse = self[\rand].value(self, 0.09, 0.24);
                 swing = self[\rand].value(self, 0.02, 0.22);
@@ -1411,10 +1423,11 @@
             \chaos, {
                 materialPool = [\passersby, \passersby, \plaits, \plaits, \rings, \rings, \molly];
                 register = [[24, 96], [28, 88], [31, 84], [36, 96]].choose;
-                gap = self[\rand].value(self, 0.04, 0.85);
-                restProb = self[\rand].value(self, 0.08, 0.42);
+                gap = self[\rand].value(self, 0.06, 0.52);
+                restProb = self[\rand].value(self, 0.04, 0.22);
                 volatility = self[\rand].value(self, 1.75, 3.4);
-                densitySkew = self[\rand].value(self, 0.35, maxDensity.max(1.55));
+                density = self[\rand].value(self, 0.58, 0.88);
+                densitySkew = self[\rand].value(self, 0.70, maxDensity.max(1.20));
                 rhythmProfile = self[\rhythmProfilesFor].value(\chaos).choose;
                 pulse = self[\rand].value(self, 0.02, 0.24);
                 swing = self[\rand].value(self, 0.0, 0.38);
@@ -1489,7 +1502,8 @@
         });
         if(modifier == \chaos and: { materials.includes(\rings) }, {
             densitySkew = densitySkew.min(0.62);
-            restProb = restProb.max(0.24);
+            density = density.max(0.70);
+            restProb = restProb.clip(0.08, 0.16);
             rings[\poly] = 1;
             rings[\damp] = rings[\damp].max(0.42);
         });
@@ -1556,7 +1570,7 @@
             cpuClass: cpuClass,
             level: 1.0,
             pan: 0.0,
-            density: 1.0,
+            density: density,
             timbreMotion: timbreMotion,
             reverbSend: 0.5,
             transpose: 0,
@@ -1899,7 +1913,9 @@
     ~replySlotStates = { |self, addr|
         if(addr.notNil, {
             var states = self[\slots].collect({ |lane| self[\slotUiState].value(lane) });
+            var densities = self[\slots].collect({ |lane| self[\displayDensityForLane].value(self, lane) });
             addr.sendMsg('/eap/slots/state', *states);
+            addr.sendMsg('/eap/slots/density', *densities);
         });
         self;
     };
