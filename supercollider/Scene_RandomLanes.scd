@@ -825,12 +825,13 @@
     ~loadVitalPatch = { |self, seed = 1, slot = 1, profile = nil|
         var cmd;
         var result;
-        self[\ensureVital].value(self);
         cmd = "sh -lc " ++ ("EAP_ENABLE_VITAL=1 /usr/local/bin/eap-vital-preset --seed " ++ seed.asInteger.asString
             ++ " --slot " ++ slot.asInteger.clip(1, self[\maxScenes]).asString
-            ++ " --profile " ++ (profile ? \default).asSymbol.asString).quote;
+            ++ " --profile " ++ (profile ? \default).asSymbol.asString
+            ++ " --no-start").quote;
         result = cmd.unixCmdGetStdOut.stripWhiteSpace;
         if(result.notEmpty, { ("EAP " ++ result).postln; });
+        self[\ensureVital].value(self);
         "sh -lc 'EAP_ENABLE_VITAL=1 /usr/local/bin/eap-connect-vital-jack 30 0.25'".unixCmdGetStdOut;
         self[\refreshVital].value(self);
         result;
@@ -1578,7 +1579,7 @@
                 });
             });
         });
-        if((materials.includes(\vital) or: { materials.includes(\vcv) }) and: { fx == \clouds }, {
+        if((materials.includes(\dexed) or: { materials.includes(\vital) } or: { materials.includes(\vcv) }) and: { fx == \clouds }, {
             "EAP external scene using pedalboard instead of Clouds for Pi CPU headroom".postln;
             fx = \pedalboard;
         });
