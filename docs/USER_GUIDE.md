@@ -40,7 +40,7 @@ This guide covers normal operation from the Launchpad, configuration pages, opti
 
 | Component | Role |
 |-----------|------|
-| **JACK** (`eap-jack.service`) | Real-time audio server (48 kHz, 1024-frame buffers) |
+| **JACK** (`eap-jack.service`) | Real-time audio server (48 kHz, 4096-frame buffers) |
 | **SuperCollider** (`eap-supercollider.service`) | Scene engine, synthesis, master bus, shared reverb |
 | **Launchpad** (`eap-launchpad.service`) | MIDI → OSC control, LED feedback |
 | **SC connect** (`eap-sc-connect.service`) | Wires SuperCollider outputs to system playback |
@@ -513,7 +513,7 @@ Set `EAP_RESTART=0` to sync files without restarting services.
 
 ### Audio buffer profile (reference)
 
-Current stable Pi profile: JACK **1024 frames × 2 periods**, SuperCollider **1024-sample** blocks. SuperCollider JACK autoconnect must target `system:playback_1/2` only — never channel counts (miswired SC ports cause xruns).
+Current stable Pi profile: JACK **4096 frames × 2 periods**, SuperCollider **4096-sample** blocks. SuperCollider JACK autoconnect must target `system:playback_1/2` only — never channel counts (miswired SC ports cause xruns).
 
 ---
 

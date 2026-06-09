@@ -1,0 +1,11 @@
+[Unit]
+Description=Electroacoustic Playground performance tuning
+Before=eap-jack.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/eap-performance-tune
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -91,7 +91,7 @@ WRAPPER
 run_sudo install -m 0755 "$tmp_wrapper" /usr/local/bin/eap-launchpad
 rm -f "$tmp_wrapper"
 
-for unit in eap-jack eap-subsequence eap-supercollider eap-sc-connect eap-launchpad eap-dexed eap-dexed-connect eap-vital eap-vital-connect eap-vcv eap-vcv-connect eap-console-status eap-k3-shutdown; do
+for unit in eap-performance-tune eap-jack eap-subsequence eap-supercollider eap-sc-connect eap-launchpad eap-dexed eap-dexed-connect eap-vital eap-vital-connect eap-vcv eap-vcv-connect eap-console-status eap-k3-shutdown; do
     if [[ -f "$REMOTE_ROOT/deployment/systemd/${unit}.service" ]]; then
         run_sudo install -m 0644 "$REMOTE_ROOT/deployment/systemd/${unit}.service" "/etc/systemd/system/${unit}.service"
     fi
@@ -109,7 +109,7 @@ if [[ -d "$REMOTE_ROOT/deployment/systemd/getty@tty1.service.d" ]]; then
 fi
 
 run_sudo systemctl daemon-reload
-run_sudo systemctl enable eap-jack.service eap-subsequence.service eap-supercollider.service eap-sc-connect.service eap-launchpad.service \
+run_sudo systemctl enable eap-performance-tune.service eap-jack.service eap-subsequence.service eap-supercollider.service eap-sc-connect.service eap-launchpad.service \
     eap-console-status.service eap-k3-shutdown.service 2>/dev/null || true
 run_sudo systemctl disable eap-dexed.service eap-dexed-connect.service eap-vital.service eap-vital-connect.service 2>/dev/null || true
 if [[ -f /etc/default/eap-vcv ]] && grep -q '^EAP_ENABLE_VCV=1' /etc/default/eap-vcv; then

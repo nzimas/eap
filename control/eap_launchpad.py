@@ -91,8 +91,8 @@ RGB_GRID_FX_LOCKED_ACTIVE = (126, 0, 0)
 RGB_GRID_FX_LOCK_FLASH = (126, 0, 0)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
-ENGINE_CODES = [0, 1, 2, 3, 4, 5, 6]
-ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 8)]
+ENGINE_CODES = [1, 2, 3, 4, 5, 6]
+ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 7)]
 AIRWINDOWS_FX = [
     "TapeDelay2", "PitchDelay", "Doublelay", "SampleDelay", "Melt", "ADT", "StarChild2", "TakeCare",
     "RingModulator", "Dubly3", "GalacticVibe", "Pafnuty2", "PitchNasty", "GuitarConditioner", "GlitchShifter", "Gringer",
@@ -463,6 +463,13 @@ def flash_modifier_required(pad: Pad) -> None:
     paint(pad)
 
 
+def flash_engine_required(pad: Pad) -> None:
+    for colour in (RGB_ENGINE_SELECTED, (0, 0, 0), RGB_ENGINE_SELECTED):
+        send_led(pad.note, colour)
+        time.sleep(0.05)
+    paint(pad)
+
+
 def parse_event(line: str) -> tuple[str, int] | None:
     match = NOTE_ON_RE.search(line)
     if match:
@@ -511,10 +518,15 @@ def send_slot_generate(
     osc_sock: socket.socket,
     pads: dict[int, Pad],
     held_for: float,
+    engine_index: int,
 ) -> bool:
     modifier = modifier_for_pad(pad, held_modifier_cc)
     if modifier == 0:
         return False
+    if engine_index < 0:
+        pad.generation_sent = True
+        flash_engine_required(pad)
+        return True
     slot = slot_for_note(pad.note)
     print(
         f"eap-launchpad: generate slot={slot} modifier={modifier} held={held_for:.2f}s",
@@ -531,6 +543,7 @@ def maybe_generate_on_hold(
     pads: dict[int, Pad],
     held_modifier_cc: int | None,
     osc_sock: socket.socket,
+    engine_index: int,
 ) -> None:
     modifier = active_modifier_index(held_modifier_cc)
     if modifier == 0:
@@ -543,7 +556,7 @@ def maybe_generate_on_hold(
         held_for = now - pad.pressed_at
         if held_for < LONG_PRESS_SECONDS:
             continue
-        send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for)
+        send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for, engine_index)
 
 
 def latch_modifier_for_held_pads(pads: dict[int, Pad], held_modifier_cc: int | None) -> None:
@@ -560,6 +573,7 @@ def handle_release(
     held_modifier_cc: int | None,
     osc_sock: socket.socket,
     pads: dict[int, Pad],
+    engine_index: int,
 ) -> None:
     if pad.pressed_at is None:
         return
@@ -575,7 +589,7 @@ def handle_release(
         return
 
     if held_for >= LONG_PRESS_SECONDS:
-        if not send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for):
+        if not send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for, engine_index):
             flash_modifier_required(pad)
     elif pad.state == STATE_BLANK:
         # Short taps never create scenes. SC may still unmute if local state is stale.
@@ -942,7 +956,7 @@ def handle_master_note(note: int, values: list[int]) -> None:
     paint_master_page(values)
 
 
-def paint_tuning_page(scale_index: int, root_index: int, engine_index: int = 0) -> None:
+def paint_tuning_page(scale_index: int, root_index: int, engine_index: int = -1) -> None:
     engine_positions = {position: index for index, position in enumerate(ENGINE_PAD_POSITIONS)}
     for note in MATRIX_NOTES:
         position = matrix_position(note)
@@ -1072,8 +1086,9 @@ def restore_session_snapshot(
                     if target is tuning_values and index == 2
                     else 127
                 )
-                target[index] = max(0, min(value, limit))
-    if len(tuning_values) > 2:
+                floor = -1 if target is tuning_values and index == 2 else 0
+                target[index] = max(floor, min(value, limit))
+    if len(tuning_values) > 2 and tuning_values[2] >= 0:
         send_engine_osc(ENGINE_CODES[tuning_values[2]])
 
 
@@ -1140,7 +1155,7 @@ def main() -> int:
     session_index = load_session_index()
     reverb_values = [31, 70, 57, 46, 32, 94, 31, 79]
     master_values = [104, 0, 127, 15, 0]
-    tuning_values = [0, 0, 0]
+    tuning_values = [0, 0, -1]
     mode = "scene"
     held_modifier_cc: int | None = None
     performance_slot: int | None = None
@@ -1185,7 +1200,7 @@ def main() -> int:
                             paint_performance_page(pads, performance_slot)
                             break
                 else:
-                    maybe_generate_on_hold(pads, held_modifier_cc, osc_sock)
+                    maybe_generate_on_hold(pads, held_modifier_cc, osc_sock, tuning_values[2])
 
             drain_slot_replies(osc_sock, pads)
 
@@ -1274,7 +1289,7 @@ def main() -> int:
                     if pad is not None and pad.pressed_at is not None:
                         held_for = time.monotonic() - pad.pressed_at
                         if not performance_interacted and held_for < LONG_PRESS_SECONDS:
-                            handle_release(pad, held_modifier_cc, osc_sock, pads)
+                            handle_release(pad, held_modifier_cc, osc_sock, pads, tuning_values[2])
                         else:
                             pad.pressed_at = None
                     mode = "scene"
@@ -1329,7 +1344,7 @@ def main() -> int:
                 pad.generation_sent = False
                 pad.modifier_latch = active_modifier_index(held_modifier_cc)
             else:
-                handle_release(pad, held_modifier_cc, osc_sock, pads)
+                handle_release(pad, held_modifier_cc, osc_sock, pads, tuning_values[2])
 
         time.sleep(1.0)
 

@@ -1,6 +1,7 @@
 [Unit]
 Description=Electroacoustic Playground JACK server
-After=sound.target
+After=sound.target eap-performance-tune.service
+Wants=eap-performance-tune.service
 Conflicts=norns-jack.service
 
 [Service]
@@ -10,7 +11,7 @@ Group=audio
 Environment=JACK_NO_AUDIO_RESERVATION=1
 LimitRTPRIO=95
 LimitMEMLOCK=infinity
-ExecStart=/usr/bin/jackd -R -P 95 -d alsa -d hw:sndrpiproto -r 48000 -n 2 -p 2048 -S -s
+ExecStart=/usr/bin/jackd -R -P 95 -d alsa -d hw:sndrpiproto -r 48000 -n 2 -p 4096 -S -s
 Restart=on-failure
 RestartSec=2
 

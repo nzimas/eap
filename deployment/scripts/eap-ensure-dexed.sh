@@ -17,6 +17,20 @@ have_ports() {
     '
 }
 
+route_ready() {
+    jack_lsp -c 2>/dev/null | awk '
+        BEGIN { port=""; left=0; right=0 }
+        /^[^[:space:]]/ { port=$0; next }
+        port ~ /^[Dd]exed:out_?1$/ || port ~ /^[Dd]exed:output_?1$/ || port ~ /^[Dd]exed:audio_out_?1$/ {
+            if ($0 ~ /SuperCollider:in_3$/) left=1
+        }
+        port ~ /^[Dd]exed:out_?2$/ || port ~ /^[Dd]exed:output_?2$/ || port ~ /^[Dd]exed:audio_out_?2$/ {
+            if ($0 ~ /SuperCollider:in_4$/) right=1
+        }
+        END { exit !(left && right) }
+    '
+}
+
 if ! command -v /usr/local/bin/Dexed >/dev/null 2>&1; then
     echo "dexed binary missing"
     exit 0
@@ -32,7 +46,9 @@ fi
 i=0
 while [ "$i" -lt "$tries" ]; do
     if have_ports; then
-        EAP_ENABLE_DEXED=1 /usr/local/bin/eap-connect-dexed-jack 12 0.15 >/dev/null 2>&1 || true
+        if ! route_ready; then
+            EAP_ENABLE_DEXED=1 /usr/local/bin/eap-connect-dexed-jack 12 0.15 >/dev/null 2>&1 || true
+        fi
         echo "dexed ready"
         exit 0
     fi

@@ -19,6 +19,17 @@ have_ports() {
     '
 }
 
+route_ready() {
+    jack_lsp -c 2>/dev/null | awk '
+        BEGIN { port=""; left=0; right=0; midi=0 }
+        /^[^[:space:]]/ { port=$0; next }
+        port ~ /[Vv]ital.*:.*audio.*out.*1$/ && $0 ~ /SuperCollider:in_5$/ { left=1 }
+        port ~ /[Vv]ital.*:.*audio.*out.*2$/ && $0 ~ /SuperCollider:in_6$/ { right=1 }
+        port ~ /[Vv]ital.*:.*events.*in$/ && $0 ~ /SuperCollider.*out0/ { midi=1 }
+        END { exit !(left && right && midi) }
+    '
+}
+
 if ! command -v jalv >/dev/null 2>&1; then
     echo "vital requested; jalv missing"
     exit 0
@@ -35,7 +46,9 @@ fi
 i=0
 while [ "$i" -lt "$tries" ]; do
     if have_ports; then
-        EAP_ENABLE_VITAL=1 /usr/local/bin/eap-connect-vital-jack 12 0.15 >/dev/null 2>&1 || true
+        if ! route_ready; then
+            EAP_ENABLE_VITAL=1 /usr/local/bin/eap-connect-vital-jack 12 0.15 >/dev/null 2>&1 || true
+        fi
         echo "vital ready"
         exit 0
     fi

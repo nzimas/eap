@@ -5,6 +5,7 @@ state_dir="${EAP_VITAL_STATE_DIR:-/home/we/.local/share/eap-vital}"
 controls_file="${1:-$state_dir/current.controls}"
 pid_file="$state_dir/vital.pid"
 log_file="$state_dir/vital.log"
+cmd_fifo="$state_dir/vital.cmd"
 client_name="${EAP_VITAL_JACK_NAME:-eap-vital}"
 plugin_uri="${EAP_VITAL_LV2_URI:-urn:distrho:vitalium}"
 
@@ -33,6 +34,8 @@ if [[ -f "$pid_file" ]]; then
         sleep 0.4
     fi
 fi
+rm -f "$cmd_fifo"
+mkfifo "$cmd_fifo"
 
 export HOME="${HOME:-/home/we}"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -42,11 +45,9 @@ export JACK_NO_AUDIO_RESERVATION=1
 preset_uri=""
 args=(-n "$client_name")
 control_args=()
-control_commands=()
 while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
     control_args+=(-c "$line")
-    control_commands+=("set ${line%%=*} ${line#*=}")
 done < "$controls_file"
 
 if grep -q '^# preset_uri=' "$controls_file"; then
@@ -57,18 +58,31 @@ if [[ -n "$preset_uri" ]]; then
     nohup bash -c '
         controls_file="$1"
         preset_uri="$2"
-        shift 2
+        cmd_fifo="$3"
+        shift 3
         {
             printf "preset %s\n" "$preset_uri"
             while IFS= read -r line; do
                 [[ -z "$line" || "$line" == \#* ]] && continue
                 printf "set %s %s\n" "${line%%=*}" "${line#*=}"
             done < "$controls_file"
-            tail -f /dev/null
+            while true; do
+                cat "$cmd_fifo"
+                sleep 0.05
+            done
         } | exec jalv "$@"
-    ' _ "$controls_file" "$preset_uri" "${args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
+    ' _ "$controls_file" "$preset_uri" "$cmd_fifo" "${args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
 else
-    nohup jalv -i "${args[@]}" "${control_args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
+    nohup bash -c '
+        cmd_fifo="$1"
+        shift
+        {
+            while true; do
+                cat "$cmd_fifo"
+                sleep 0.05
+            done
+        } | exec jalv "$@"
+    ' _ "$cmd_fifo" "${args[@]}" "${control_args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
 fi
 pid="$!"
 echo "$pid" > "$pid_file"

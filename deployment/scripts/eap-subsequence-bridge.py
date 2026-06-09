@@ -33,7 +33,7 @@ BPM = float(os.environ.get("EAP_SUBSEQUENCE_BPM", "90"))
 MIDI_OUT = os.environ.get("EAP_SUBSEQUENCE_MIDI_OUTPUT", "")
 
 ENGINE_CODES = {
-    0: "any",
+    0: "none",
     1: "plaits",
     2: "rings",
     3: "passersby",
@@ -116,7 +116,7 @@ def _install_lane_osc_handler(composition: subsequence.Composition) -> None:
                 cfg["scale_index"] = int(args[11])
                 cfg["root_note"] = int(args[12])
                 engine_code = int(args[13])
-                cfg["engine"] = ENGINE_CODES.get(engine_code, "any")
+                cfg["engine"] = ENGINE_CODES.get(engine_code, "none")
             if len(args) > 14:
                 scale_size = int(args[14])
                 cfg["scale_size"] = scale_size
@@ -159,7 +159,7 @@ def _install_lane_osc_handler(composition: subsequence.Composition) -> None:
     def handle_engine(address: str, *args: object) -> None:
         if not args:
             return
-        engine = ENGINE_CODES.get(int(args[0]), "any")
+        engine = ENGINE_CODES.get(int(args[0]), "none")
         update_engine(composition, engine)
         LOG.info("engine preference=%s", engine)
 

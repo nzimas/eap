@@ -55,14 +55,14 @@ def default_lane_cfg(slot: int) -> LaneCfg:
         "root_note": 0,
         "scale_size": 7,
         "scale_steps": [],
-        "engine": "any",
+        "engine": "none",
     }
 
 
 def init_lane_data(composition: Any) -> None:
     composition.data.setdefault("lanes", {})
     composition.data.setdefault("tuning", {"scale_index": 1, "root_note": 0, "scale_size": 7, "scale_steps": []})
-    composition.data.setdefault("engine", "any")
+    composition.data.setdefault("engine", "none")
     for slot in range(1, 9):
         composition.data["lanes"][str(slot)] = default_lane_cfg(slot)
 
@@ -84,7 +84,7 @@ def update_tuning(composition: Any, scale_index: int, root_note: int, scale_step
 
 
 def update_engine(composition: Any, engine: str) -> None:
-    composition.data["engine"] = engine or "any"
+    composition.data["engine"] = engine or "none"
 
 
 def _effective_cfg(cfg: LaneCfg, composition: Any) -> LaneCfg:
@@ -94,7 +94,7 @@ def _effective_cfg(cfg: LaneCfg, composition: Any) -> LaneCfg:
     merged["root_note"] = cfg.get("root_note", tuning.get("root_note", 0))
     merged["scale_size"] = cfg.get("scale_size", tuning.get("scale_size", 7))
     merged["scale_steps"] = cfg.get("scale_steps") or tuning.get("scale_steps") or []
-    merged["engine"] = cfg.get("engine") or composition.data.get("engine", "any")
+    merged["engine"] = cfg.get("engine") or composition.data.get("engine", "none")
     return merged
 
 

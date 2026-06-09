@@ -11,8 +11,8 @@ s = Server.default;
 s.options.numInputBusChannels = 8;
 s.options.numOutputBusChannels = 4;
 s.options.sampleRate = 48000;
-s.options.blockSize = 2048;
-s.options.hardwareBufferSize = 2048;
+s.options.blockSize = 4096;
+s.options.hardwareBufferSize = 4096;
 s.options.memSize = 262144;
 s.options.numWireBufs = 256;
 s.options.maxNodes = 8192;
@@ -151,7 +151,7 @@ s.waitForBoot({
     }, '/eap/tuning');
 
     OSCdef(\eapSourceEngine, { |msg|
-        var code = (msg[1] ? 0).asInteger.clip(0, ~eapScenes[\sourceEngineSymbols].size - 1);
+        var code = (msg[1] ? 0).asInteger.clip(0, ~eapScenes[\sourceEngineSymbols].size);
         ~eapScenes[\setSourceEnginePreference].value(~eapScenes, code);
     }, '/eap/engine');
 

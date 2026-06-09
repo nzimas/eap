@@ -12,6 +12,7 @@ from pathlib import Path
 
 STATE_DIR = Path(os.environ.get("EAP_VITAL_STATE_DIR", "/home/we/.local/share/eap-vital"))
 PRESET_ROOT = "file:///usr/local/lib/lv2/Vitalium-unfa.lv2"
+CMD_FIFO = STATE_DIR / "vital.cmd"
 PROFILE_PRESETS = {
     "percussive": ("Hardcore_Kick.ttl", "Kickbass.ttl", "Retro_Ambient_Pluck.ttl"),
     "drone": ("Dark_Ambient.ttl", "Sparkly_Dreamy_Pad.ttl", "Supersaw.ttl"),
@@ -117,18 +118,43 @@ def controls_for_profile(rng: random.Random, profile: str, mutate: float) -> dic
     return {key: clamp(value, 0.0, 1.0) for key, value in controls.items()}
 
 
-def write_controls(slot: int, profile: str, rng: random.Random, mutate: float) -> Path:
+def command_text(preset_uri: str, controls: dict[str, float], include_preset: bool = True) -> str:
+    lines = [f"preset {preset_uri}"] if include_preset else []
+    lines.extend(f"set {key} {value:.6f}" for key, value in sorted(controls.items()))
+    return "\n".join(lines) + "\n"
+
+
+def live_preset_enabled() -> bool:
+    return os.environ.get("EAP_VITAL_LIVE_PRESET", "0") == "1"
+
+
+def send_to_running_vital(preset_uri: str, controls: dict[str, float]) -> bool:
+    if not CMD_FIFO.exists():
+        return False
+    try:
+        fd = os.open(CMD_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        os.write(fd, command_text(preset_uri, controls, include_preset=live_preset_enabled()).encode("utf-8"))
+    finally:
+        os.close(fd)
+    return True
+
+
+def write_controls(slot: int, profile: str, rng: random.Random, mutate: float) -> tuple[Path, str, dict[str, float]]:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     out = STATE_DIR / f"slot-{slot}.controls"
     controls = controls_for_profile(rng, profile, mutate)
     preset = rng.choice(PROFILE_PRESETS.get(profile, PROFILE_PRESETS["default"]))
-    header = f"# preset_uri={PRESET_ROOT}/{preset}\n"
+    preset_uri = f"{PRESET_ROOT}/{preset}"
+    header = f"# preset_uri={preset_uri}\n"
     out.write_text(
         header + "\n".join(f"{key}={value:.6f}" for key, value in sorted(controls.items())) + "\n",
         encoding="utf-8",
     )
     (STATE_DIR / "current.controls").write_text(out.read_text(encoding="utf-8"), encoding="utf-8")
-    return out
+    return out, preset_uri, controls
 
 
 def main() -> int:
@@ -141,12 +167,15 @@ def main() -> int:
     args = parser.parse_args()
 
     rng = random.Random(args.seed) if args.seed is not None else random.SystemRandom()
-    out = write_controls(max(1, min(args.slot, 8)), args.profile, rng, args.mutate)
+    out, preset_uri, controls = write_controls(max(1, min(args.slot, 8)), args.profile, rng, args.mutate)
 
     if not args.no_start:
         subprocess.run(["/usr/local/bin/eap-start-vital", str(out)], check=True)
+    else:
+        send_to_running_vital(preset_uri, controls)
 
-    print(f"vitalium controls output={out} profile={args.profile}")
+    mode = "live-preset" if live_preset_enabled() or not args.no_start else "queued-preset"
+    print(f"vitalium controls output={out} profile={args.profile} preset={preset_uri.rsplit('/', 1)[-1]} mode={mode}")
     return 0
 
 
