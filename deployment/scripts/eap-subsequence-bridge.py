@@ -40,7 +40,6 @@ ENGINE_CODES = {
     4: "molly",
     5: "dexed",
     6: "vital",
-    7: "vcv",
 }
 
 

@@ -7,7 +7,7 @@ Electroacoustic Playground is a bespoke Raspberry Pi/Fates instrument stack buil
 The current stack includes:
 
 - SuperCollider scene-slot engine with up to eight Launchpad-addressable scene slots.
-- Random scene generation from Plaits, Rings, Passersby, Molly, optional external Dexed, optional realtime Vital/Vitalium, and optional headless VCV Rack.
+- Random scene generation from Plaits, Rings, Passersby, Molly, optional external Dexed, and optional realtime Vital/Vitalium.
 - Per-scene pedalboard or Clouds-style effects, bounded for CPU safety.
 - Launchpad Mini Mk3 controller daemon with scene toggles, long-press regeneration, sound-type modifiers (CC 19/29/39), LED states, and auxiliary pages for reverb, tuning, master dynamics, and sessions.
 - Systemd units and deployment helpers for the Fates/Pi environment.
@@ -48,11 +48,11 @@ Vital/Vitalium is treated as a realtime external JACK/MIDI instrument, not as an
 
 Use `eap-install-vitalium` on the Pi to build and install Vitalium LV2 plus the `jalv` host and MIDI bridge dependencies. Vital remains visible on the engine selector, but runtime launch is gated behind `EAP_ENABLE_VITAL=1` because the current Pi/JACK profile xruns with live Vitalium enabled.
 
-On the Scales / Root Note page, engine row 4 maps left to right as: Any, Plaits, Rings, Passersby, Molly, Dexed, Vital/Vitalium, VCV Rack.
+On the Scales / Root Note page, engine row 4 maps left to right as: Any, Plaits, Rings, Passersby, Molly, Dexed, Vital/Vitalium. VCV Rack infrastructure remains in the stack, but VCV is not currently exposed as a selectable scene engine.
 
 ## VCV Rack Integration
 
-VCV Rack is treated as an optional realtime external JACK/MIDI instrument. EAP starts Rack 2 in headless mode with a cached `.vcv` patch, lightly mutates compatible patch parameters, routes Rack audio back into SuperCollider inputs 3/4, and sends live MIDI notes from the same scale-aware sequencer used by the other engines.
+VCV Rack is currently disabled as a selectable scene engine while its infrastructure remains in place. The retained stack can start Rack 2 in headless mode with a cached `.vcv` patch, lightly mutate compatible patch parameters, route Rack audio back into SuperCollider inputs 3/4, and send live MIDI notes from the same scale-aware sequencer used by the other engines when re-enabled.
 
 Use `eap-install-vcv-rack` on the Pi to build Rack for ARM64, install Fundamental, and create `/usr/local/bin/eap-rack`. Use `eap-vcv-install-seeds` to install the bundled Core/Fundamental MIDI performance patch, `eap-vcv-sync-patches` to cache Patchstorage patches, and `eap-vcv-sync-patches --reindex` to refresh compatibility flags. Only patches with installed modules and audio/MIDI capability are used; EAP does not synthesize fallback patches when the cache has no compatible entry. Runtime launch is gated behind `EAP_ENABLE_VCV=1` (enabled by the installer default).
 

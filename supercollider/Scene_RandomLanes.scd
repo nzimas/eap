@@ -57,7 +57,7 @@
     ];
 
     ~soundModifierSymbols = [\percussive, \drone, \chaos];
-    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \dexed, \vital, \vcv];
+    ~sourceEngineSymbols = [nil, \plaits, \rings, \passersby, \molly, \dexed, \vital];
 
     ~modifierFromCode = { |self, code|
         var index = code.asInteger;
@@ -1240,7 +1240,7 @@
         );
         var vcvPatchSeed = vcv[\patchSeed];
         var vcvPatchInfo = "";
-        var vcvAvailable = self[\vcvRuntimeAvailable].value(self);
+        var vcvAvailable = false;
         var cpuClass = \normal;
         if(dexedAvailable, {
             materialPool = materialPool ++ [\dexed, \dexed];
