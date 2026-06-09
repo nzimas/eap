@@ -1622,7 +1622,7 @@
                 \pit, c[\pit], \pos, c[\pos], \size, c[\size], \dens, c[\dens],
                 \tex, c[\tex], \drywet, c[\drywet], \spread, c[\spread],
                 \rvb, c[\rvb], \fb, c[\fb], \mode, c[\mode], \lofi, c[\lofi],
-                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0,
+                \amp, lane[\level] ? 1.0, \pan, lane[\pan] ? 0.0,
                 \send, lane[\reverbSend] ? 0.5
             ]);
             lane[\outSynth] = synth;
@@ -1646,7 +1646,7 @@
             outSynth = Synth.new(\eapLaneOut, [
                 \in, currentIn, \out, self[\masterBus].index, \sendOut, self[\reverbBus].index,
                 \gridOut, self[\gridFxBus].index,
-                \amp, lane[\amp] * (lane[\level] ? 1.0), \pan, lane[\pan] ? 0.0,
+                \amp, lane[\level] ? 1.0, \pan, lane[\pan] ? 0.0,
                 \send, lane[\reverbSend] ? 0.5
             ], target, \addAfter);
             lane[\synths].add(outSynth);
@@ -1667,7 +1667,7 @@
                 self[\laneGridFxSelected].value(self, lane)
             };
             lane[\outSynth].set(
-                \amp, (lane[\amp] ? 0.18) * (lane[\level] ? 1.0),
+                \amp, lane[\level] ? 1.0,
                 \pan, lane[\pan] ? 0.0,
                 \send, lane[\reverbSend] ? 0.5,
                 \dryAmp, if(routedToGrid, { 0.0 }, { 1.0 }),
@@ -1683,6 +1683,37 @@
                 self[\applyLaneOutput].value(self, lane);
             };
         });
+    };
+
+    ~primeLane = { |self, lane|
+        var modifier = lane[\soundModifier] ? \harmonic;
+        var events = switch(modifier,
+            \drone, { [
+                (sourceCount: 1, accent: 1.45, scaleStep: 0, panBias: 0.0, decayScale: 1.6, sustain: 1)
+            ] },
+            \percussive, { [
+                (sourceCount: 1, accent: 1.65, scaleStep: 0, panBias: 0.0, decayScale: 1.05),
+                (sourceCount: 1, accent: 1.20, scaleStep: 2, panBias: -0.16, decayScale: 0.85),
+                (sourceCount: 1, accent: 1.10, scaleStep: -1, panBias: 0.18, decayScale: 0.95)
+            ] },
+            \chaos, { [
+                (sourceCount: 1, accent: 1.35, scaleStep: 0, panBias: 0.0, decayScale: 0.7),
+                (sourceCount: 1, accent: 1.10, scaleStep: 3, panBias: 0.22, decayScale: 0.55)
+            ] },
+            { [
+                (sourceCount: 1, accent: 1.35, scaleStep: 0, panBias: 0.0, decayScale: 1.15),
+                (sourceCount: 1, accent: 1.05, scaleStep: 1, panBias: 0.12, decayScale: 0.95)
+            ] }
+        );
+        Routine({
+            events.do({ |event, i|
+                if(i > 0, { [0.16, 0.22, 0.28].wrapAt(i - 1).wait; });
+                if(lane.notNil and: { lane[\state] == \active }, {
+                    self[\triggerLane].value(self, lane, event);
+                });
+            });
+        }).play(SystemClock);
+        self;
     };
 
     ~stopLaneRoutine = { |lane|
@@ -1705,8 +1736,11 @@
 
     ~triggerLane = { |self, lane, event = nil|
         var ev = event ? ();
-        var source = lane[\materials][0] ? lane[\materials].choose;
-        var sources = if(source.isNil, { [] }, { [source] });
+        var materials = lane[\materials] ? [];
+        var sourceCount = (ev[\sourceCount] ? 1).asInteger.clip(1, 2);
+        var sources = if(materials.isEmpty, { [] }, {
+            if(sourceCount <= 1, { [materials.choose] }, { materials.scramble.keep(sourceCount.min(materials.size)) });
+        });
         var accent = (ev[\accent] ? 1).asFloat.clip(0.2, 2.0);
         var scaleStep = (ev[\scaleStep] ? 0).asInteger;
         var panBias = (ev[\panBias] ? 0).asFloat.clip(-0.5, 0.5);
@@ -1893,12 +1927,7 @@
                     ++ " rhythm did not start — retrying").postln;
                 self[\restartLaneRoutine].value(self, lane, wasMuted);
             }, {
-                if(wasBlank, {
-                    self[\triggerLane].value(self, lane, (
-                        sourceCount: 1, accent: 1.0, scaleStep: 0,
-                        panBias: 0.0, decayScale: 0.85
-                    ));
-                });
+                if(wasBlank, { self[\primeLane].value(self, lane); });
             });
         };
         lane;
