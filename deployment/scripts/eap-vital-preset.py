@@ -41,11 +41,14 @@ def controls_for_profile(rng: random.Random, profile: str, mutate: float) -> dic
         "filter_1_switch": 1.0,
         "filter_1_cutoff": jitter(rng, 0.62, 0.14 * amount),
         "filter_1_resonance": jitter(rng, 0.22, 0.10 * amount),
-        "chorus_switch": rng.choice([0.0, 1.0]),
-        "chorus_mix": jitter(rng, 0.25, 0.12 * amount),
+        "chorus_switch": 0.0,
+        "chorus_mix": 0.0,
         "delay_switch": 0.0,
+        "delay_mix": 0.0,
         "reverb_switch": 0.0,
+        "reverb_mix": 0.0,
         "distortion_switch": 0.0,
+        "distortion_drive": 0.0,
         "envelope_1_attack": 0.02,
         "envelope_1_decay": 0.35,
         "envelope_1_sustain": 0.75,
@@ -62,8 +65,8 @@ def controls_for_profile(rng: random.Random, profile: str, mutate: float) -> dic
                 "envelope_1_decay": jitter(rng, 0.08, 0.04 * amount),
                 "envelope_1_sustain": 0.0,
                 "envelope_1_release": jitter(rng, 0.05, 0.03 * amount),
-                "distortion_switch": rng.choice([0.0, 1.0]),
-                "distortion_drive": jitter(rng, 0.20, 0.15 * amount),
+                "distortion_switch": 0.0,
+                "distortion_drive": 0.0,
             }
         )
     elif profile == "drone":
@@ -76,10 +79,10 @@ def controls_for_profile(rng: random.Random, profile: str, mutate: float) -> dic
                 "envelope_1_decay": jitter(rng, 0.72, 0.10 * amount),
                 "envelope_1_sustain": jitter(rng, 0.88, 0.06 * amount),
                 "envelope_1_release": jitter(rng, 0.70, 0.12 * amount),
-                "chorus_switch": 1.0,
-                "chorus_mix": jitter(rng, 0.45, 0.10 * amount),
-                "reverb_switch": 1.0,
-                "reverb_mix": jitter(rng, 0.38, 0.12 * amount),
+                "chorus_switch": 0.0,
+                "chorus_mix": 0.0,
+                "reverb_switch": 0.0,
+                "reverb_mix": 0.0,
             }
         )
     elif profile == "harmonic":
@@ -90,9 +93,9 @@ def controls_for_profile(rng: random.Random, profile: str, mutate: float) -> dic
                 "envelope_1_decay": jitter(rng, 0.55, 0.12 * amount),
                 "envelope_1_sustain": jitter(rng, 0.78, 0.08 * amount),
                 "envelope_1_release": jitter(rng, 0.46, 0.12 * amount),
-                "chorus_switch": 1.0,
-                "delay_switch": rng.choice([0.0, 1.0]),
-                "delay_mix": jitter(rng, 0.18, 0.08 * amount),
+                "chorus_switch": 0.0,
+                "delay_switch": 0.0,
+                "delay_mix": 0.0,
             }
         )
     elif profile == "chaos":
@@ -106,8 +109,8 @@ def controls_for_profile(rng: random.Random, profile: str, mutate: float) -> dic
                 "envelope_1_decay": jitter(rng, 0.22, 0.18 * amount),
                 "envelope_1_sustain": jitter(rng, 0.35, 0.30 * amount),
                 "envelope_1_release": jitter(rng, 0.18, 0.18 * amount),
-                "distortion_switch": 1.0,
-                "distortion_drive": jitter(rng, 0.55, 0.25 * amount),
+                "distortion_switch": 0.0,
+                "distortion_drive": 0.0,
             }
         )
 

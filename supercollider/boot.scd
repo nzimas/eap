@@ -8,7 +8,7 @@
 "SC_JACK_DEFAULT_OUTPUTS".setenv("system:playback_1,system:playback_2");
 
 s = Server.default;
-s.options.numInputBusChannels = 4;
+s.options.numInputBusChannels = 8;
 s.options.numOutputBusChannels = 4;
 s.options.sampleRate = 48000;
 s.options.blockSize = 2048;

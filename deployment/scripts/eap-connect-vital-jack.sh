@@ -25,16 +25,18 @@ while [ "$i" -lt "$tries" ]; do
     vital_r="$(jack_lsp | awk '{ line=tolower($0); if (line ~ /vital.*:.*audio.*out.*2$/) { print; exit } }')"
     vital_midi="$(jack_lsp | awk '{ line=tolower($0); if (line ~ /vital.*:.*events.*in$/) { print; exit } }')"
     sc_midi="$(jack_lsp | awk '{ line=tolower($0); if (line ~ /supercollider.*capture.*out0/) { print; exit } }')"
-    sc_l="$(jack_lsp | awk '/^SuperCollider:in_3$/ { print; exit }')"
-    sc_r="$(jack_lsp | awk '/^SuperCollider:in_4$/ { print; exit }')"
+    sc_l="$(jack_lsp | awk '/^SuperCollider:in_5$/ { print; exit }')"
+    sc_r="$(jack_lsp | awk '/^SuperCollider:in_6$/ { print; exit }')"
     if [ -n "$vital_l" ] && [ -n "$vital_r" ] && [ -n "$sc_l" ] && [ -n "$sc_r" ]; then
         jack_disconnect "$vital_l" system:playback_1 2>/dev/null || true
         jack_disconnect "$vital_r" system:playback_2 2>/dev/null || true
+        jack_disconnect "$vital_l" SuperCollider:in_3 2>/dev/null || true
+        jack_disconnect "$vital_r" SuperCollider:in_4 2>/dev/null || true
         jack_connect "$vital_l" "$sc_l" 2>/dev/null || true
         jack_connect "$vital_r" "$sc_r" 2>/dev/null || true
         if [ -n "$vital_midi" ] && [ -n "$sc_midi" ]; then
             jack_connect "$sc_midi" "$vital_midi" 2>/dev/null || true
-            echo "connected Vital JACK outs to SuperCollider inputs 3/4 and SuperCollider MIDI to Vital"
+            echo "connected Vital JACK outs to SuperCollider inputs 5/6 and SuperCollider MIDI to Vital"
             exit 0
         fi
     fi

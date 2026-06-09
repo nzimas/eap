@@ -491,8 +491,14 @@
             Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime).clip(0, 1), 0.95, 0.01));
         }).add;
 
-        SynthDef(\eapExternalInput, { |out = 0, amp = 0.0, fadeTime = 0.08|
-            var sig = SoundIn.ar([2, 3]);
+        SynthDef(\eapExternalInput, { |out = 0, amp = 0.0, fadeTime = 0.08, inL = 2, inR = 3|
+            var sig = SoundIn.ar([inL, inR]);
+            sig = HPF.ar(LeakDC.ar(sig), 18);
+            Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime), 0.94, 0.01));
+        }).add;
+
+        SynthDef(\eapLaneExternalInput, { |out = 0, amp = 0.0, fadeTime = 0.035, inL = 2, inR = 3|
+            var sig = SoundIn.ar([inL, inR]);
             sig = HPF.ar(LeakDC.ar(sig), 18);
             Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime), 0.94, 0.01));
         }).add;
@@ -859,15 +865,53 @@
         });
     };
 
-    ~pulseExternalInput = { |self, duration = 0.5|
-        if(self[\externalInputSynth].notNil, {
+    ~externalInputChannelsFor = { |source|
+        switch(source,
+            \dexed, { [2, 3] },
+            \vital, { [4, 5] },
+            \vcv, { [6, 7] },
+            { [2, 3] }
+        );
+    };
+
+    ~ensureLaneExternalInput = { |self, lane, source|
+        var key = source.asSymbol;
+        var synths = lane[\externalInputSynths];
+        var synth;
+        var channels;
+        if(synths.isNil, {
+            synths = IdentityDictionary.new;
+            lane[\externalInputSynths] = synths;
+        });
+        synth = synths[key];
+        if(synth.isNil, {
+            channels = self[\externalInputChannelsFor].value(key);
+            synth = Synth.head(lane[\group], \eapLaneExternalInput, [
+                \out, lane[\sourceBus].index,
+                \inL, channels[0],
+                \inR, channels[1],
+                \amp, 0.0
+            ]);
+            synths[key] = synth;
+            lane[\synths].add(synth);
+            ("EAP lane " ++ (lane[\slot] ? lane[\index] ? "?") ++
+                " external " ++ key ++ " routed through lane bus from SC inputs " ++
+                (channels[0] + 1) ++ "/" ++ (channels[1] + 1)).postln;
+        });
+        synth;
+    };
+
+    ~pulseExternalInput = { |self, lane, source, duration = 0.5|
+        var synth = self[\ensureLaneExternalInput].value(self, lane, source);
+        if(synth.notNil, {
             var holdUntil = Main.elapsedTime + duration.asFloat.clip(0.04, 12.0) + 0.08;
-            self[\externalInputHoldUntil] = (self[\externalInputHoldUntil] ? 0).max(holdUntil);
-            self[\externalInputSynth].set(\amp, 0.82, \fadeTime, 0.02);
+            var holdKey = (source.asString ++ "ExternalInputHoldUntil").asSymbol;
+            lane[holdKey] = (lane[holdKey] ? 0).max(holdUntil);
+            synth.set(\amp, (lane[\amp] ? 0.18) * 1.12, \fadeTime, 0.02);
             Routine({
                 duration.asFloat.clip(0.04, 12.0).wait;
-                if(Main.elapsedTime >= ((self[\externalInputHoldUntil] ? 0) - 0.001), {
-                    self[\muteExternalInput].value(self);
+                if(lane.notNil and: { Main.elapsedTime >= ((lane[holdKey] ? 0) - 0.001) }, {
+                    synth.set(\amp, 0.0, \fadeTime, 0.12);
                 });
             }).play(SystemClock);
         });
@@ -1881,7 +1925,7 @@
                     ((d[\velocity] ? 82) * accent).clip(if(isChaos, { 18 }, { 24 }), 126),
                     noteDur
                 );
-                self[\pulseExternalInput].value(self, noteDur);
+                self[\pulseExternalInput].value(self, lane, \dexed, noteDur);
             };
             if(source == \vital) {
                 var v = lane[\vital];
@@ -1892,7 +1936,7 @@
                     ((v[\velocity] ? 82) * accent).clip(if(isChaos, { 16 }, { 24 }), 126),
                     noteDur
                 );
-                self[\pulseExternalInput].value(self, noteDur);
+                self[\pulseExternalInput].value(self, lane, \vital, noteDur);
             };
             if(source == \vcv) {
                 var v = lane[\vcv];
@@ -1903,7 +1947,7 @@
                     ((v[\velocity] ? 82) * accent).clip(if(isChaos, { 16 }, { 24 }), 126),
                     noteDur
                 );
-                self[\pulseExternalInput].value(self, noteDur);
+                self[\pulseExternalInput].value(self, lane, \vcv, noteDur);
             };
         });
     };
@@ -2604,7 +2648,7 @@
         self[\gridFxQueue].clear;
         self[\gridFxProcessing] = false;
         self[\gridFxSendSynth] = Synth.head(self[\masterGroup], \eapGridFxSend, [\in, self[\gridFxBus].index, \out, 2, \amp, 0.0]);
-        self[\externalInputSynth] = Synth.head(self[\masterGroup], \eapExternalInput, [\out, self[\masterBus].index, \amp, 0.0]);
+        self[\externalInputSynth] = nil;
         self[\masterSynth] = Synth.tail(self[\masterGroup], \eapSceneMaster, [
             \in, self[\masterBus].index, \reverbIn, self[\reverbBus].index, \out, 0
         ]);
