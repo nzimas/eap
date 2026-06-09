@@ -547,7 +547,10 @@ def handle_release(
     if held_for >= LONG_PRESS_SECONDS:
         send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for)
     elif pad.state == STATE_BLANK:
-        send_slot_generate(pad, held_modifier_cc, osc_sock, pads, held_for)
+        # Short tap is always an authoritative SC-side toggle. If the local pad
+        # state is stale, this unmutes the existing scene instead of replacing it.
+        send_slot_osc(osc_sock, slot, 0, modifier)
+        wait_slot_replies(osc_sock, pads)
     else:
         # Mute / unmute only — never pass modifier on toggle.
         send_slot_osc(osc_sock, slot, 0, 0)
