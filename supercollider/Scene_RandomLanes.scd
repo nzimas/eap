@@ -30,6 +30,7 @@
     ~vcvAvailable = false;
     ~scaleIndex = 0;
     ~rootNote = 0;
+    ~muteMode = \refresh;
     ~sourceEnginePreference = nil;
     ~sessionDir = "/home/we/.local/share/eap/sessions";
     ~lanes = List.new;
@@ -86,6 +87,20 @@
         var pref = self[\sourceEnginePreference];
         var code = if(pref.isNil, { 0 }, { self[\sourceEngineSymbols].indexOf(pref) + 1 });
         if(code < 0, { 0 }, { code });
+    };
+
+    ~muteModeFromCode = { |self, code|
+        if(code.asInteger == 0, { \output }, { \refresh });
+    };
+
+    ~muteModeCode = { |self|
+        if(self[\muteMode] == \output, { 0 }, { 1 });
+    };
+
+    ~setMuteMode = { |self, code|
+        self[\muteMode] = self[\muteModeFromCode].value(self, code);
+        ("EAP mute mode=" ++ self[\muteMode]).postln;
+        self[\muteMode];
     };
 
     ~syncSubsequenceTuning = { |self|
@@ -236,7 +251,7 @@
         if(lane.isNil or: { lane[\state] == \blank }, {
             0;
         }, {
-            ((self[\seqDensityForLane].value(self, lane) * (1.0 - ((lane[\restProb] ? 0.12) * 0.5))).clip(0.05, 1.0) * 127).round(1).asInteger;
+            ((lane[\density] ? 1.0).asFloat.clip(0.05, 1.0) * 127).round(1).asInteger;
         });
     };
 
@@ -362,8 +377,16 @@
         });
     };
 
+    ~laneConsumesLoad = { |lane|
+        lane.notNil and: {
+            (lane[\state] == \active) or: {
+                (lane[\state] == \muted) and: { lane[\mutedMode] == \output }
+            }
+        };
+    };
+
     ~activeCount = { |self|
-        self[\slots].count({ |lane| lane.notNil and: { lane[\state] == \active } });
+        self[\slots].count({ |lane| self[\laneConsumesLoad].value(lane) });
     };
 
     ~loadFactor = { |self|
@@ -1939,8 +1962,9 @@
             var routedToGrid = (self[\gridFxActive] ? false).asBoolean and: {
                 self[\laneGridFxSelected].value(self, lane)
             };
+            var audible = lane[\state] == \active;
             lane[\outSynth].set(
-                \amp, lane[\level] ? 1.0,
+                \amp, if(audible, { lane[\level] ? 1.0 }, { 0.0 }),
                 \pan, lane[\pan] ? 0.0,
                 \send, lane[\reverbSend] ? 0.5,
                 \dryAmp, if(routedToGrid, { 0.0 }, { 1.0 }),
@@ -2222,6 +2246,7 @@
             lane[\synths] = List.new;
             self[\buildFx].value(self, lane, lane[\sourceBus]);
             lane[\state] = \active;
+            lane[\mutedMode] = nil;
             if(wasMuted, { self[\restoreExternalEngineForLane].value(self, lane); });
             self[\applyLaneOutput].value(self, lane);
             self[\restartLaneRoutine].value(self, lane, wasMuted);
@@ -2284,7 +2309,30 @@
             lane[\pedals] = nil;
             lane[\outSynth] = nil;
             lane[\state] = nextState;
+            lane[\mutedMode] = if(nextState == \muted, { \refresh }, { nil });
             self[\muteExternalInput].value(self);
+            self[\syncExternalEngines].value(self);
+        };
+        lane;
+    };
+
+    ~outputMuteLane = { |self, lane|
+        if(lane.notNil and: { lane[\state] == \active }) {
+            lane[\state] = \muted;
+            lane[\mutedMode] = \output;
+            if(lane[\outSynth].notNil) {
+                lane[\outSynth].set(\fadeTime, 0.45, \amp, 0.0);
+            };
+            self[\syncExternalEngines].value(self);
+        };
+        lane;
+    };
+
+    ~outputUnmuteLane = { |self, lane|
+        if(lane.notNil and: { lane[\state] == \muted and: { lane[\mutedMode] == \output } }) {
+            lane[\state] = \active;
+            lane[\mutedMode] = nil;
+            self[\applyLaneOutput].value(self, lane);
             self[\syncExternalEngines].value(self);
         };
         lane;
@@ -2353,9 +2401,7 @@
         var density = value.asFloat.clip(0.05, 1.0);
         if(lane.notNil, {
             lane[\density] = density;
-            if(lane[\state] == \active) {
-                self[\syncSubsequenceDensity].value(self, index, density);
-            };
+            self[\syncSubsequenceDensity].value(self, index, density);
             ("EAP slot " ++ index ++ " density=" ++ density.round(0.001)).postln;
             1;
         }, {
@@ -2725,6 +2771,7 @@
             masterValues: self[\masterValues].copy,
             scaleIndex: self[\scaleIndex],
             rootNote: self[\rootNote],
+            muteMode: self[\muteModeCode].value(self),
             slots: self[\slots].collect({ |lane| self[\laneSnapshot].value(self, lane); })
         );
     };
@@ -2752,6 +2799,7 @@
             self[\clear].value(self);
             self[\reverbValues] = snapshot[\reverbValues].copy;
             self[\masterValues] = snapshot[\masterValues].copy;
+            self[\setMuteMode].value(self, snapshot[\muteMode] ? self[\muteModeCode].value(self));
             self[\setTuning].value(self, snapshot[\scaleIndex] ? self[\scaleIndex], snapshot[\rootNote] ? self[\rootNote]);
             self[\applyReverb].value(self);
             self[\applyMaster].value(self);
@@ -2889,12 +2937,20 @@
             0;
         }, {
             if(lane[\state] == \active, {
-                self[\stopLane].value(self, lane, \muted);
+                if(self[\muteMode] == \output, {
+                    self[\outputMuteLane].value(self, lane);
+                }, {
+                    self[\stopLane].value(self, lane, \muted);
+                });
                 self[\syncLoad].value(self);
-                ("EAP slot " ++ index ++ " muted").postln;
+                ("EAP slot " ++ index ++ " muted mode=" ++ self[\muteMode]).postln;
                 2;
             }, {
-                self[\startLane].value(self, lane);
+                if(lane[\mutedMode] == \output, {
+                    self[\outputUnmuteLane].value(self, lane);
+                }, {
+                    self[\startLane].value(self, lane);
+                });
                 self[\syncLoad].value(self);
                 ("EAP slot " ++ index ++ " active").postln;
                 1;

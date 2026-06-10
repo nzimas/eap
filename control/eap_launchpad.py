@@ -19,6 +19,7 @@ BOTTOM_ROW_NOTES = tuple(range(11, 19))
 MATRIX_NOTES = tuple((row * 10) + col for row in range(1, 9) for col in range(1, 9))
 REVERB_CC = 91
 TUNING_CC = 92
+SETTINGS_CC = 97
 SESSION_CC = 98
 MASTER_CC = 89
 GRID_FX_CC = 93
@@ -89,10 +90,15 @@ RGB_GRID_FX_SCENE_SELECTED = (0, 126, 42)
 RGB_GRID_FX_LOCKED = (24, 0, 0)
 RGB_GRID_FX_LOCKED_ACTIVE = (126, 0, 0)
 RGB_GRID_FX_LOCK_FLASH = (126, 0, 0)
+RGB_SETTINGS_DIM = (8, 8, 10)
+RGB_SETTINGS_VALUE = (44, 44, 56)
+RGB_SETTINGS_SELECTED = (126, 126, 104)
+RGB_SETTINGS_PAGE = (96, 96, 72)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
 ENGINE_CODES = [1, 2, 3, 4, 5]
 ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 6)]
+MUTE_MODE_PADS = {81: 0, 82: 1}
 AIRWINDOWS_FX = [
     "TapeDelay2", "PitchDelay", "Doublelay", "SampleDelay", "Melt", "ADT", "StarChild2", "TakeCare",
     "RingModulator", "Dubly3", "GalacticVibe", "Pafnuty2", "PitchNasty", "GuitarConditioner", "GlitchShifter", "Gringer",
@@ -266,6 +272,13 @@ def send_slot_reverb_send_osc(slot: int, value: int) -> None:
 def send_slot_transpose_osc(slot: int, semitones: int) -> None:
     packet = osc_string("/eap/slot/transpose") + osc_string(",ii")
     packet += struct.pack(">ii", int(slot), int(semitones))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_mute_mode_osc(mode: int) -> None:
+    packet = osc_string("/eap/settings/mute_mode") + osc_string(",i")
+    packet += struct.pack(">i", int(mode))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
 
@@ -636,6 +649,7 @@ def paint_scene_page(pads: dict[int, Pad], held_modifier_cc: int | None = None) 
     for pad in pads.values():
         paint(pad)
     paint_modifier_leds(held_modifier_cc)
+    send_led(SETTINGS_CC, RGB_SETTINGS_DIM)
     send_led(GRID_FX_CC, RGB_GRID_FX_IDLE)
 
 
@@ -958,6 +972,25 @@ def handle_master_note(note: int, values: list[int]) -> None:
     paint_master_page(values)
 
 
+def paint_settings_page(mute_mode: int) -> None:
+    for note in MATRIX_NOTES:
+        if note in MUTE_MODE_PADS:
+            colour = RGB_SETTINGS_SELECTED if MUTE_MODE_PADS[note] == mute_mode else RGB_SETTINGS_VALUE
+        else:
+            colour = RGB_SETTINGS_DIM
+        send_led(note, colour)
+    send_led(SETTINGS_CC, RGB_SETTINGS_PAGE)
+
+
+def handle_settings_note(note: int, settings_values: list[int]) -> bool:
+    if note not in MUTE_MODE_PADS:
+        return False
+    settings_values[0] = MUTE_MODE_PADS[note]
+    send_mute_mode_osc(settings_values[0])
+    paint_settings_page(settings_values[0])
+    return True
+
+
 def paint_tuning_page(scale_index: int, root_index: int, engine_index: int = -1) -> None:
     engine_positions = {position: index for index, position in enumerate(ENGINE_PAD_POSITIONS)}
     for note in MATRIX_NOTES:
@@ -1022,6 +1055,7 @@ def session_snapshot(
     reverb_values: list[int],
     master_values: list[int],
     tuning_values: list[int],
+    settings_values: list[int],
 ) -> dict:
     return {
         "saved_at": time.time(),
@@ -1035,6 +1069,7 @@ def session_snapshot(
         "reverb": list(reverb_values),
         "master": list(master_values),
         "tuning": list(tuning_values),
+        "settings": list(settings_values),
     }
 
 
@@ -1044,6 +1079,7 @@ def restore_session_snapshot(
     reverb_values: list[int],
     master_values: list[int],
     tuning_values: list[int],
+    settings_values: list[int],
 ) -> None:
     for note, state in zip(BOTTOM_ROW_NOTES, data.get("pads", [])):
         if state in (STATE_BLANK, STATE_ACTIVE, STATE_MUTED):
@@ -1076,6 +1112,7 @@ def restore_session_snapshot(
         (reverb_values, data.get("reverb", [])),
         (master_values, data.get("master", [])),
         (tuning_values, data.get("tuning", [])),
+        (settings_values, data.get("settings", [])),
     ):
         for index, value in enumerate(source[: len(target)]):
             if isinstance(value, int):
@@ -1086,12 +1123,16 @@ def restore_session_snapshot(
                     if target is tuning_values and index == 1
                     else len(ENGINE_CODES) - 1
                     if target is tuning_values and index == 2
+                    else 1
+                    if target is settings_values and index == 0
                     else 127
                 )
                 floor = -1 if target is tuning_values and index == 2 else 0
                 target[index] = max(floor, min(value, limit))
     if len(tuning_values) > 2 and tuning_values[2] >= 0:
         send_engine_osc(ENGINE_CODES[tuning_values[2]])
+    if settings_values:
+        send_mute_mode_osc(settings_values[0])
 
 
 def paint_session_page(index: dict) -> None:
@@ -1119,6 +1160,7 @@ def handle_session_release(
     reverb_values: list[int],
     master_values: list[int],
     tuning_values: list[int],
+    settings_values: list[int],
 ) -> None:
     if session_pad.pressed_at is None:
         return
@@ -1134,13 +1176,13 @@ def handle_session_release(
     if held_for >= LONG_PRESS_SECONDS:
         blink_session_save(session_pad.note)
         send_session_osc(slot, 1)
-        slots[key] = session_snapshot(pads, reverb_values, master_values, tuning_values)
+        slots[key] = session_snapshot(pads, reverb_values, master_values, tuning_values, settings_values)
         session_index["active_slot"] = slot
         save_session_index(session_index)
         paint_session_page(session_index)
     elif key in slots:
         send_session_osc(slot, 0)
-        restore_session_snapshot(slots[key], pads, reverb_values, master_values, tuning_values)
+        restore_session_snapshot(slots[key], pads, reverb_values, master_values, tuning_values, settings_values)
         session_index["active_slot"] = slot
         save_session_index(session_index)
         paint_session_page(session_index)
@@ -1158,6 +1200,7 @@ def main() -> int:
     reverb_values = [31, 70, 57, 46, 32, 94, 31, 79]
     master_values = [104, 0, 127, 15, 0]
     tuning_values = [0, 0, -1]
+    settings_values = [1]
     mode = "scene"
     held_modifier_cc: int | None = None
     performance_slot: int | None = None
@@ -1170,6 +1213,7 @@ def main() -> int:
     paint_scene_page(pads, held_modifier_cc)
     osc_sock = create_osc_socket()
     wait_for_sc_ready(osc_sock, pads)
+    send_mute_mode_osc(settings_values[0])
     send_slots_query_osc(osc_sock)
     wait_slot_replies(osc_sock, pads, timeout=1.0)
     paint_scene_page(pads, held_modifier_cc)
@@ -1265,6 +1309,15 @@ def main() -> int:
                     elif value == 0 and mode != "scene":
                         mode = "scene"
                         paint_scene_page(pads, held_modifier_cc)
+                elif controller == SETTINGS_CC:
+                    if value > 0 and mode != "settings":
+                        mode = "settings"
+                        performance_slot = None
+                        performance_scene_note = None
+                        paint_settings_page(settings_values[0])
+                    elif value == 0 and mode != "scene":
+                        mode = "scene"
+                        paint_scene_page(pads, held_modifier_cc)
                 elif controller == GRID_FX_CC:
                     if value > 0:
                         if mode == "gridfx":
@@ -1327,6 +1380,7 @@ def main() -> int:
                         reverb_values,
                         master_values,
                         tuning_values,
+                        settings_values,
                     )
                 continue
 
@@ -1336,6 +1390,10 @@ def main() -> int:
                 else:
                     pressed_at = grid_fx_pressed.pop(note, None)
                     handle_grid_fx_release(note, pressed_at, grid_fx_active, pads, grid_fx_scenes, grid_fx_locked)
+                continue
+            if mode == "settings":
+                if kind == "on":
+                    handle_settings_note(note, settings_values)
                 continue
 
             pad = pads.get(note)

@@ -95,6 +95,11 @@ s.waitForBoot({
         ~eapScenes[\setSlotDensity].value(~eapScenes, slot, value);
     }, '/eap/slot/density');
 
+    OSCdef(\eapMuteMode, { |msg|
+        var mode = (msg[1] ? 1).asInteger.clip(0, 1);
+        ~eapScenes[\setMuteMode].value(~eapScenes, mode);
+    }, '/eap/settings/mute_mode');
+
     OSCdef(\eapSlotTimbre, { |msg|
         var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
         var value = ((msg[2] ? 0).asInteger / 127).clip(0, 1);
