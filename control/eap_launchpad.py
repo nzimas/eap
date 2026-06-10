@@ -535,6 +535,8 @@ def send_slot_generate(
     )
     send_slot_osc(osc_sock, slot, 1, modifier)
     pad.generation_sent = True
+    pad.state = STATE_ACTIVE
+    paint(pad)
     wait_slot_replies(osc_sock, pads, timeout=0.35)
     return True
 

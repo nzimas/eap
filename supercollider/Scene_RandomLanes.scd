@@ -748,9 +748,22 @@
         self[\refreshDexed].value(self);
     };
 
+    ~queueEnsureDexed = { |self|
+        var now = Main.elapsedTime;
+        if((now - (self[\lastDexedEnsureQueuedAt] ? -9999)) > 10.0, {
+            self[\lastDexedEnsureQueuedAt] = now;
+            "sh -lc 'EAP_ENABLE_DEXED=1 /usr/local/bin/eap-ensure-dexed 25 0.25 >/tmp/eap-dexed-ensure.log 2>&1'".unixCmd;
+        });
+        self;
+    };
+
     ~sendDexedNote = { |self, channel = 0, note = 60, velocity = 80, duration = 0.6|
         var midi = self[\dexedMidi];
-        if(midi.isNil, { self[\ensureDexed].value(self); midi = self[\dexedMidi]; });
+        if(midi.isNil, {
+            self[\refreshDexed].value(self);
+            midi = self[\dexedMidi];
+            if(midi.isNil, { self[\queueEnsureDexed].value(self); });
+        });
         if(midi.notNil, {
             var chan = channel.asInteger.clip(0, 15);
             var pitch = note.asInteger.clip(0, 127);
@@ -776,6 +789,17 @@
         result;
     };
 
+    ~queueDexedPatch = { |self, seed = 1, channel = 0, profile = nil|
+        var command = "EAP_ENABLE_DEXED=1 /usr/local/bin/eap-ensure-dexed 25 0.25 >/tmp/eap-dexed-ensure.log 2>&1; "
+            ++ "EAP_ENABLE_DEXED=1 /usr/local/bin/eap-dexed-patch --seed " ++ seed.asInteger.asString
+            ++ " --channel " ++ channel.asInteger.clip(0, 15).asString
+            ++ (if(profile.notNil, { " --profile " ++ profile.asSymbol.asString }, { "" }))
+            ++ " >/tmp/eap-dexed-patch-" ++ channel.asInteger.clip(0, 15).asString ++ ".log 2>&1";
+        self[\lastDexedEnsureQueuedAt] = Main.elapsedTime;
+        ("sh -lc " ++ command.quote).unixCmd;
+        "queued seed=" ++ seed.asInteger.asString;
+    };
+
     ~vitalRuntimeAvailable = { |self|
         "sh -lc 'command -v jalv >/dev/null 2>&1 && command -v eap-vital-preset >/dev/null 2>&1 && lv2ls 2>/dev/null | grep -qx \"urn:distrho:vitalium\" && echo yes'".unixCmdGetStdOut.contains("yes");
     };
@@ -784,6 +808,15 @@
         var result = "sh -lc 'EAP_ENABLE_VITAL=1 /usr/local/bin/eap-ensure-vital 18 0.25 2>&1'".unixCmdGetStdOut.stripWhiteSpace;
         if(result.notEmpty, { ("EAP " ++ result).postln; });
         self[\refreshVital].value(self);
+    };
+
+    ~queueEnsureVital = { |self|
+        var now = Main.elapsedTime;
+        if((now - (self[\lastVitalEnsureQueuedAt] ? -9999)) > 10.0, {
+            self[\lastVitalEnsureQueuedAt] = now;
+            "sh -lc 'EAP_ENABLE_VITAL=1 /usr/local/bin/eap-ensure-vital 18 0.25 >/tmp/eap-vital-ensure.log 2>&1'".unixCmd;
+        });
+        self;
     };
 
     ~refreshVital = { |self|
@@ -841,9 +874,25 @@
         result;
     };
 
+    ~queueVitalPatch = { |self, seed = 1, slot = 1, profile = nil|
+        var slotIndex = slot.asInteger.clip(1, self[\maxScenes]);
+        var command = "EAP_ENABLE_VITAL=1 /usr/local/bin/eap-vital-preset --seed " ++ seed.asInteger.asString
+            ++ " --slot " ++ slotIndex.asString
+            ++ " --profile " ++ (profile ? \default).asSymbol.asString
+            ++ " --no-start >/tmp/eap-vital-preset-" ++ slotIndex.asString ++ ".log 2>&1; "
+            ++ "EAP_ENABLE_VITAL=1 /usr/local/bin/eap-ensure-vital 18 0.25 >/tmp/eap-vital-ensure.log 2>&1";
+        self[\lastVitalEnsureQueuedAt] = Main.elapsedTime;
+        ("sh -lc " ++ command.quote).unixCmd;
+        "queued seed=" ++ seed.asInteger.asString;
+    };
+
     ~sendVitalNote = { |self, note = 60, velocity = 80, duration = 0.6|
         var midi = self[\vitalMidi];
-        if(midi.isNil, { self[\ensureVital].value(self); midi = self[\vitalMidi]; });
+        if(midi.isNil, {
+            self[\refreshVital].value(self);
+            midi = self[\vitalMidi];
+            if(midi.isNil, { self[\queueEnsureVital].value(self); });
+        });
         if(midi.notNil, {
             var pitch = note.asInteger.clip(0, 127);
             var vel = velocity.asInteger.clip(1, 127);
@@ -928,16 +977,70 @@
         });
     };
 
+    ~anyNeededExternalLane = { |self, source|
+        self[\slots].any({ |lane|
+            lane.notNil and: { lane[\state] == \active } and: { (lane[\materials] ? []).includes(source) };
+        });
+    };
+
+    ~restoreExternalEngineForLane = { |self, lane|
+        var materials = lane[\materials] ? [];
+        if(materials.includes(\dexed), {
+            var d = lane[\dexed] ? ();
+            self[\queueDexedPatch].value(self, d[\patchSeed] ? 0, d[\channel] ? 0, d[\patchProfile]);
+        });
+        if(materials.includes(\vital), {
+            var v = lane[\vital] ? ();
+            self[\queueVitalPatch].value(self, v[\patchSeed] ? 0, lane[\slot] ? (lane[\index] ? 1), v[\patchProfile] ? \default);
+        });
+        self;
+    };
+
+    ~stopVitalEngine = { |self|
+        "/usr/local/bin/eap-stop-vital >/tmp/eap-stop-vital.log 2>&1".unixCmd;
+        "EAP vital stop queued".postln;
+        self[\vitalMidi] = nil;
+        self[\vitalAvailable] = false;
+        self;
+    };
+
+    ~stopDexedEngine = { |self|
+        "/usr/local/bin/eap-stop-dexed >/tmp/eap-stop-dexed.log 2>&1".unixCmd;
+        "EAP dexed stop queued".postln;
+        self[\dexedMidi] = nil;
+        self[\dexedAvailable] = false;
+        self;
+    };
+
     ~stopVcvEngine = { |self|
-        "pkill -f '[R]ack .*-h '".unixCmdGetStdOut;
-        "pkill -f '[e]ap-vcv-midi-bridge'".unixCmdGetStdOut;
+        "sh -lc \"pkill -f '[R]ack .*-h ' 2>/dev/null; pkill -f '[e]ap-vcv-midi-bridge' 2>/dev/null\" >/tmp/eap-stop-vcv.log 2>&1".unixCmd;
+        "EAP vcv stop queued".postln;
         self[\vcvMidi] = nil;
         self[\vcvAvailable] = false;
         self;
     };
 
     ~syncVcvEngine = { |self|
-        if(self[\anyActiveVcvLane].value(self).not, { self[\stopVcvEngine].value(self); });
+        var needsVcv = self[\anyActiveVcvLane].value(self);
+        if(needsVcv.not and: { (self[\vcvAvailable] ? false) or: { self[\vcvMidi].notNil or: { self[\vcvWasNeeded] ? false } } }, {
+            self[\stopVcvEngine].value(self);
+        });
+        self[\vcvWasNeeded] = needsVcv;
+        self;
+    };
+
+    ~syncExternalEngines = { |self|
+        var needsVital = self[\anyNeededExternalLane].value(self, \vital);
+        var needsDexed = self[\anyNeededExternalLane].value(self, \dexed);
+        if(needsVital.not and: { (self[\vitalAvailable] ? false) or: { self[\vitalMidi].notNil or: { self[\vitalWasNeeded] ? false } } }, {
+            self[\stopVitalEngine].value(self);
+        });
+        if(needsDexed.not and: { (self[\dexedAvailable] ? false) or: { self[\dexedMidi].notNil or: { self[\dexedWasNeeded] ? false } } }, {
+            self[\stopDexedEngine].value(self);
+        });
+        self[\vitalWasNeeded] = needsVital;
+        self[\dexedWasNeeded] = needsDexed;
+        self[\syncVcvEngine].value(self);
         self;
     };
 
@@ -1566,11 +1669,11 @@
             );
         });
         if(materials.includes(\dexed), {
-            dexedPatchInfo = self[\loadDexedPatch].value(self, dexedPatchSeed, index - 1, dexed[\patchProfile]);
+            dexedPatchInfo = self[\queueDexedPatch].value(self, dexedPatchSeed, index - 1, dexed[\patchProfile]);
             dexed[\patchInfo] = dexedPatchInfo;
         });
         if(materials.includes(\vital), {
-            vitalPatchInfo = self[\loadVitalPatch].value(self, vitalPatchSeed, index, vital[\patchProfile]);
+            vitalPatchInfo = self[\queueVitalPatch].value(self, vitalPatchSeed, index, vital[\patchProfile]);
             vital[\patchInfo] = vitalPatchInfo;
         });
         if(materials.includes(\vcv), {
@@ -1969,6 +2072,7 @@
             lane[\synths] = List.new;
             self[\buildFx].value(self, lane, lane[\sourceBus]);
             lane[\state] = \active;
+            if(wasMuted, { self[\restoreExternalEngineForLane].value(self, lane); });
             self[\applyLaneOutput].value(self, lane);
             self[\restartLaneRoutine].value(self, lane, wasMuted);
             if(lane[\routine].isNil, {
@@ -2031,7 +2135,7 @@
             lane[\outSynth] = nil;
             lane[\state] = nextState;
             self[\muteExternalInput].value(self);
-            self[\syncVcvEngine].value(self);
+            self[\syncExternalEngines].value(self);
         };
         lane;
     };
@@ -2062,7 +2166,7 @@
             var wet = ((self[\reverbValues][0] ? 0.24) * wetScale).clip(0, 0.9);
             self[\masterSynth].set(\wet, wet);
         });
-        self[\syncVcvEngine].value(self);
+        self[\syncExternalEngines].value(self);
     };
 
     ~setSlotVolume = { |self, slot, value|
@@ -2503,6 +2607,7 @@
         self[\cloudLaneIndex] = nil;
         self[\adaptiveJournal].clear;
         self[\adaptiveSerial] = 0;
+        self[\syncExternalEngines].value(self);
     };
 
     ~slotStatus = { |self, slot|

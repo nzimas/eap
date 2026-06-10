@@ -8,6 +8,7 @@ log_file="$state_dir/vital.log"
 cmd_fifo="$state_dir/vital.cmd"
 client_name="${EAP_VITAL_JACK_NAME:-eap-vital}"
 plugin_uri="${EAP_VITAL_LV2_URI:-urn:distrho:vitalium}"
+rtprio="${EAP_VITAL_RTPRIO:-70}"
 
 mkdir -p "$state_dir"
 touch "$controls_file"
@@ -59,7 +60,8 @@ if [[ -n "$preset_uri" ]]; then
         controls_file="$1"
         preset_uri="$2"
         cmd_fifo="$3"
-        shift 3
+        rtprio="$4"
+        shift 4
         {
             printf "preset %s\n" "$preset_uri"
             while IFS= read -r line; do
@@ -70,19 +72,20 @@ if [[ -n "$preset_uri" ]]; then
                 cat "$cmd_fifo"
                 sleep 0.05
             done
-        } | exec jalv "$@"
-    ' _ "$controls_file" "$preset_uri" "$cmd_fifo" "${args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
+        } | exec chrt -f "$rtprio" jalv "$@"
+    ' _ "$controls_file" "$preset_uri" "$cmd_fifo" "$rtprio" "${args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
 else
     nohup bash -c '
         cmd_fifo="$1"
-        shift
+        rtprio="$2"
+        shift 2
         {
             while true; do
                 cat "$cmd_fifo"
                 sleep 0.05
             done
-        } | exec jalv "$@"
-    ' _ "$cmd_fifo" "${args[@]}" "${control_args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
+        } | exec chrt -f "$rtprio" jalv "$@"
+    ' _ "$cmd_fifo" "$rtprio" "${args[@]}" "${control_args[@]}" "$plugin_uri" >"$log_file" 2>&1 &
 fi
 pid="$!"
 echo "$pid" > "$pid_file"
