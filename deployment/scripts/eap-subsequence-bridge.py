@@ -39,6 +39,7 @@ ENGINE_CODES = {
     3: "passersby",
     4: "molly",
     5: "fm7",
+    6: "harmonium",
 }
 
 

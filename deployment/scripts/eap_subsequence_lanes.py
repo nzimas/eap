@@ -157,7 +157,7 @@ def _configure_pattern_for_modifier(p: Any, cfg: LaneCfg) -> int:
 
 def _drone_event_budget(cfg: LaneCfg) -> int:
     material = str(cfg.get("material", "rings"))
-    if material in {"rings", "passersby", "molly", "fm7"}:
+    if material in {"rings", "passersby", "molly", "fm7", "harmonium"}:
         return 2
     if material in {"vital", "vcv", "dexed"}:
         return 2
@@ -1402,7 +1402,7 @@ def _density_event_target(cfg: LaneCfg, profile: str) -> int:
     if modifier == "percussive":
         return max(3, min(14, round(2 + density * 12)))
     if modifier == "chaos":
-        base_max = 8 if material == "rings" else 10
+        base_max = 8 if material in {"rings", "harmonium"} else 10
         if profile in {"sparseBolt", "spectralDrift"}:
             base_max = max(5, base_max - 2)
         return max(2, min(base_max, round(1 + density * (base_max - 1))))

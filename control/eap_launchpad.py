@@ -96,8 +96,8 @@ RGB_SETTINGS_SELECTED = (126, 126, 104)
 RGB_SETTINGS_PAGE = (96, 96, 72)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
-ENGINE_CODES = [1, 2, 3, 4, 5]
-ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 6)]
+ENGINE_CODES = [1, 2, 3, 4, 5, 6]
+ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 7)]
 MUTE_MODE_PADS = {81: 0, 82: 1}
 AIRWINDOWS_FX = [
     "TapeDelay2", "PitchDelay", "Doublelay", "SampleDelay", "Melt", "ADT", "StarChild2", "TakeCare",

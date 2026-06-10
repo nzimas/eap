@@ -59,7 +59,7 @@
     ];
 
     ~soundModifierSymbols = [\percussive, \drone, \chaos];
-    ~sourceEngineSymbols = [\plaits, \rings, \passersby, \molly, \fm7];
+    ~sourceEngineSymbols = [\plaits, \rings, \passersby, \molly, \fm7, \harmonium];
 
     ~modifierFromCode = { |self, code|
         var index = code.asInteger;
@@ -718,6 +718,107 @@
             sig = XFade2.ar(sig, Fold.ar(sig * grit.linlin(0, 1, 1.0, 3.4), -0.7, 0.7), (grit.clip(0, 1) * 2) - 1);
             env = EnvGen.kr(Env.linen(0.001, (attack + decay).max(0.03), release.max(0.02)), doneAction: 2);
             Out.ar(out, Pan2.ar(Limiter.ar(tanh(sig * 1.8) * amp * env, 0.95), pan));
+        }).add;
+
+        // Harmonium (after Trevor Treglia's HARMONIUM): an additive resonant-bank
+        // voice. A selectable source feeds a 10-partial BPF bank tuned to a
+        // harmonic/Bark/Buchla formation, with per-partial pan swirl and amp
+        // shimmer, optional ring/freq-shift modulation and sub octaves. A dry
+        // floor of the enveloped source guarantees audibility regardless of bank
+        // settings. One-shot and audio-rate throughout so it renders correctly at
+        // the engine's 4096-sample block.
+        SynthDef(\eapLaneHarmoniumNote, { |out = 0, freq = 220, amp = 0.12, pan = 0,
+            envAttack = 0.01, envDecay = 2.0, envRelease = 1.2,
+            source = 4, formation = 0, num = 10, rolloff = 1.0,
+            rq = 0.02, bandRes = 0.3, timbre = 0.5, ouMode = 0, pulseWidth = 0.5,
+            rmMix = 0.0, rmHz = 30, rmRatio = 1.0, rmTrack = 0,
+            fmMix = 0.0, fmIndex = 0.0, fmRatio = 1.0, fmTrack = 1,
+            subAmp = 0.0, subOct1 = 0, subOct2 = 0,
+            swirlDepth = 0.4, swirlRate = 0.05, ampShimmer = 0.3, makeup = 14, wet = 0.6,
+            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
+            var maxP = 10, inds, nyq, fundEff, freqsOver, freqsUnder, useUnder, bankHarm;
+            var barkArr, barkFreqs, buchArr, buchFreqs, freqs, numMask, valid, actMask;
+            var ampWeights, ampWG, qmul, rqSafe, bandArea;
+            var saw, pulse, sine, tri, white, pink, harmFreqs, keep, harmOsc, src, srcMono;
+            var lfo, timbreCtl, darkSrc, brightSrc, procSrc;
+            var rmFreq, ringOsc, ringSig, fmFreq, fmMod, fmCar;
+            var env, bands, resGain, wetSig, ampLFO, ampMod, pos, lGains, rGains, wetL, wetR, swirl;
+            var powerSum, compGain, sig, subSig, sigOut, drySig, dryLevel;
+            inds = (1..maxP);
+            nyq = SampleRate.ir * 0.5;
+            fundEff = freq.max(0.01);
+            freqsOver = fundEff * inds;
+            freqsUnder = fundEff / inds;
+            useUnder = (ouMode > 0.5);
+            bankHarm = ((1 - useUnder) * freqsOver) + (useUnder * freqsUnder);
+            barkArr = #[60,150,250,350,450,570,700,840,1000,1170];
+            barkFreqs = barkArr;
+            buchArr = #[88,125,190,285,430,650,1000,1500,2200,3300];
+            buchFreqs = buchArr;
+            freqs = Array.fill(maxP, { |i| Select.kr(formation.clip(0,2), [bankHarm[i], barkFreqs[i], buchFreqs[i]]) });
+            numMask = (inds <= num);
+            valid = (freqs >= 20) * (freqs <= (nyq * 0.9));
+            actMask = numMask * valid;
+            ampWeights = inds.asFloat.pow(rolloff.neg);
+            ampWG = ampWeights;
+            qmul = bandRes.clip(0,1).exprange(1, 12);
+            rqSafe = (rq / qmul).max(0.0001);
+            bandArea = rqSafe * qmul;
+            lfo = Select.kr(modShape.clip(0,3), [SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)]);
+            saw   = VarSaw.ar(fundEff, 0, 0.5);
+            pulse = Pulse.ar(fundEff, pulseWidth.clip(0.01,0.99));
+            sine  = SinOsc.ar(fundEff);
+            tri   = LFTri.ar(fundEff);
+            pink  = PinkNoise.ar;
+            white = WhiteNoise.ar;
+            harmFreqs = fundEff * inds;
+            keep = harmFreqs <= nyq;
+            harmOsc = Mix.ar(SinOsc.ar(harmFreqs, 0, keep)) * (1.0 / maxP);
+            // normalize source amplitudes so all selections sit near +/-0.45
+            src = Select.ar(source.clip(0,6), [sine*0.5, tri*0.5, saw*0.45, pulse*0.4, harmOsc*3.5, pink*0.6, white*0.45]);
+            src = LeakDC.ar(src);
+            srcMono = src;
+            timbreCtl = (timbre + (lfo * modDepth * 0.18)).clip(0,1);
+            darkSrc = LPF.ar(srcMono, timbreCtl.exprange(800,4000));
+            brightSrc = (HPF.ar(srcMono, timbreCtl.exprange(200,4000)) * timbreCtl.linlin(0,1,1,3)).tanh;
+            procSrc = XFade2.ar(darkSrc, brightSrc, timbreCtl.linlin(0,1,-1,1));
+            rmFreq = ((1 - rmTrack.clip(0,1)) * rmHz.clip(0.1,20000)) + (rmTrack.clip(0,1) * (fundEff * rmRatio).clip(0.1,20000));
+            ringOsc = SinOsc.ar(rmFreq);
+            ringSig = procSrc * ringOsc;
+            procSrc = XFade2.ar(procSrc, ringSig, (rmMix.clip(0,1) * 2 - 1));
+            fmFreq = ((1 - fmTrack.clip(0,1)) * 100) + (fmTrack.clip(0,1) * (fundEff * fmRatio).clip(0.1,20000));
+            fmMod = SinOsc.ar(fmFreq);
+            fmCar = FreqShift.ar(procSrc, fmMod * fmIndex.max(0) * fmFreq);
+            procSrc = XFade2.ar(procSrc, fmCar, (fmMix.clip(0,1) * 2 - 1));
+            env = EnvGen.ar(Env.linen(envAttack.max(0.001), envDecay.max(0.02), envRelease.max(0.02), curve: -3), doneAction: 2);
+            resGain = bandRes.clip(0,1).exprange(1, 8);
+            bands = BPF.ar(procSrc * env, freqs, rqSafe) * rqSafe * resGain * actMask * ampWG;
+            // per-partial amp shimmer (one cheap control-rate LFO each)
+            ampLFO = Array.fill(maxP, { |i| SinOsc.kr((0.05 + (0.06 * i)) * (1 + ampShimmer), Rand(0,2pi)).range(0,1) });
+            ampMod = (1 - ampShimmer.clip(0,1)) + (ampShimmer.clip(0,1) * ampLFO);
+            bands = bands * ampMod;
+            // Cheap stereo: equal-power static spread via compile-time pan gains
+            // (no per-partial Pan2 UGens) followed by one slow Rotate2 swirl. The
+            // pan param biases the rotation so lane panning still applies.
+            pos = Array.fill(maxP, { |i| ((i / (maxP - 1)) * 2 - 1) * 0.9 });
+            lGains = pos.collect({ |p| ((1 - p) * 0.25 * pi).cos });
+            rGains = pos.collect({ |p| ((1 - p) * 0.25 * pi).sin });
+            wetL = (bands * lGains).sum;
+            wetR = (bands * rGains).sum;
+            swirl = (SinOsc.kr(swirlRate.max(0.0001)) * swirlDepth.clip(0,1) * 0.4) + (pan * 0.25);
+            wetSig = Rotate2.ar(wetL, wetR, swirl);
+            powerSum = (((ampWG * ampWG) * bandArea * actMask).sum) + 1e-9;
+            compGain = powerSum.reciprocal.sqrt * makeup.max(0.1);
+            // Dry enveloped source guarantees audibility; the resonant bank adds
+            // the harmonium colour on top. Dry is never fully removed.
+            drySig = Pan2.ar(procSrc * env, pan.clip(-1, 1));
+            dryLevel = 1 - (wet.clip(0,1) * 0.7);
+            sig = (drySig * dryLevel) + (wetSig * compGain * wet.clip(0,1));
+            subSig = ((SinOsc.ar(fundEff * 0.5) * subOct1) + (SinOsc.ar(fundEff * 0.25) * subOct2)) * subAmp.clip(0,1);
+            sig = sig + ((subSig * env) ! 2);
+            sigOut = LeakDC.ar(sig) * amp;
+            sigOut = Limiter.ar(sigOut, 0.95, 0.01);
+            Out.ar(out, sigOut);
         }).add;
 
         SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, sendOut = 0, gridOut = 0,
@@ -1470,6 +1571,35 @@
             brightness: self[\rand].value(self, 0.25, 0.92),
             grit: self[\rand].value(self, 0.0, 0.18)
         );
+        var harmonium = (
+            // Bias toward harmonic formation + broadband sources for reliable
+            // audibility; bark/buchla and noise sources appear as occasional colour.
+            source: [0, 1, 2, 2, 3, 4, 4, 5].choose,
+            formation: [0, 0, 0, 0, 1, 2].choose,
+            num: rrand(5, 10),
+            rolloff: self[\rand].value(self, 0.5, 1.5),
+            rq: self[\exprand].value(self, 0.01, 0.06),
+            bandRes: self[\rand].value(self, 0.15, 0.6),
+            timbre: self[\rand].value(self, 0.3, 0.72),
+            ouMode: [0, 0, 0, 1].choose,
+            pulseWidth: self[\rand].value(self, 0.2, 0.7),
+            rmMix: [0, 0, 0, self[\rand].value(self, 0.1, 0.45)].choose,
+            rmHz: self[\exprand].value(self, 8, 220),
+            rmRatio: [0.5, 1, 1.5, 2, 3].choose,
+            rmTrack: [0, 1].choose,
+            fmMix: [0, 0, 0, self[\rand].value(self, 0.08, 0.4)].choose,
+            fmIndex: self[\rand].value(self, 0.05, 0.5),
+            fmRatio: [0.5, 1, 2, 3].choose,
+            subAmp: [0, 0, self[\rand].value(self, 0.2, 0.6)].choose,
+            subOct1: [0, 1].choose,
+            subOct2: [0, 0, 1].choose,
+            swirlDepth: self[\rand].value(self, 0.25, 0.7),
+            swirlRate: self[\exprand].value(self, 0.02, 0.18),
+            ampShimmer: self[\rand].value(self, 0.1, 0.5),
+            wet: self[\rand].value(self, 0.45, 0.78),
+            envDecay: self[\exprand].value(self, 1.5, 6.0),
+            envRelease: self[\exprand].value(self, 0.6, 2.5)
+        );
         var clouds = (
             pit: [-12, -7, -5, 0, 7, 12].choose,
             pos: self[\rand].value(self, 0.05, 0.92),
@@ -1998,6 +2128,7 @@
             molly: molly,
             passersby: passersby,
             fm7: fm7,
+            harmonium: harmonium,
             dexed: dexed,
             vital: vital,
             vcv: vcv,
@@ -2291,6 +2422,34 @@
                     \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.65 }), if(isChaos, { 0.95 }, { 0.65 })) + panBias).clip(-1, 1),
                     \strike, if(isPrime, { if(isDrone, { 1.3 }, { 1.55 }) }, { if(isPerc, { 1.18 }, { if(isDrone, { 1.05 }, { 1.12 }) }) }),
                     \exciterDecay, if(isPrime, { if(isPerc, { 0.06 }, { 0.10 }) }, { if(isPerc, { 0.045 }, { 0.08 }) }),
+                    \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
+                ]);
+            };
+            if(source == \harmonium) {
+                var h = lane[\harmonium] ? ();
+                var baseDecay = (h[\envDecay] ? 2.5) * decayScale * sustainScale;
+                var baseRelease = (h[\envRelease] ? 1.2) * sustainScale;
+                Synth.head(lane[\group], \eapLaneHarmoniumNote, [
+                    \out, lane[\sourceBus].index, \freq, pitch.midicps,
+                    \source, if(isChaos, { rrand(0, 6) }, { h[\source] ? 4 }),
+                    \formation, if(isChaos, { rrand(0, 2) }, { h[\formation] ? 0 }),
+                    \num, (h[\num] ? 10).asInteger.clip(3, 10),
+                    \rolloff, (h[\rolloff] ? 1.0),
+                    \rq, (h[\rq] ? 0.02), \bandRes, (h[\bandRes] ? 0.3),
+                    \timbre, if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { (h[\timbre] ? 0.5) }),
+                    \ouMode, (h[\ouMode] ? 0), \pulseWidth, (h[\pulseWidth] ? 0.5),
+                    \rmMix, if(isChaos, { self[\rand].value(self, 0.0, 0.6) }, { (h[\rmMix] ? 0) }),
+                    \rmHz, (h[\rmHz] ? 30), \rmRatio, (h[\rmRatio] ? 1), \rmTrack, (h[\rmTrack] ? 0),
+                    \fmMix, if(isChaos, { self[\rand].value(self, 0.0, 0.5) }, { (h[\fmMix] ? 0) }),
+                    \fmIndex, (h[\fmIndex] ? 0.1), \fmRatio, (h[\fmRatio] ? 1),
+                    \subAmp, (h[\subAmp] ? 0), \subOct1, (h[\subOct1] ? 0), \subOct2, (h[\subOct2] ? 0),
+                    \swirlDepth, (h[\swirlDepth] ? 0.4), \swirlRate, (h[\swirlRate] ? 0.05),
+                    \ampShimmer, (h[\ampShimmer] ? 0.3), \wet, (h[\wet] ? 0.6),
+                    \envAttack, if(isDrone, { self[\rand].value(self, 0.15, 0.9) }, { if(isPerc, { 0.004 }, { self[\rand].value(self, 0.01, 0.12) }) }),
+                    \envDecay, baseDecay.clip(if(isPerc, { 0.08 }, { 0.3 }), if(isDrone, { 10.0 }, { if(isPerc, { 0.9 }, { if(isChaos, { 2.5 }, { 6.0 }) }) })),
+                    \envRelease, baseRelease.clip(0.05, if(isDrone, { 4.0 }, { 2.5 })),
+                    \amp, lane[\amp] * accent * (if(isPerc, { 0.92 }, { if(isChaos, { self[\rand].value(self, 0.4, 1.1) }, { 0.85 }) })),
+                    \pan, (self[\rand].value(self, if(isChaos, { -0.9 }, { -0.6 }), if(isChaos, { 0.9 }, { 0.6 })) + panBias).clip(-1, 1),
                     \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
@@ -2793,6 +2952,7 @@
                 soundModifier: lane[\soundModifier], lastDegree: lane[\lastDegree],
                 sourceEngine: lane[\sourceEngine], adaptive: if(lane[\adaptive].notNil, { lane[\adaptive].copy }, { nil }),
                 molly: lane[\molly].copy, passersby: lane[\passersby].copy, fm7: lane[\fm7].copy,
+                harmonium: if(lane[\harmonium].notNil, { lane[\harmonium].copy }, { nil }),
                 dexed: lane[\dexed].copy, vital: lane[\vital].copy, vcv: lane[\vcv].copy,
                 clouds: lane[\clouds].copy, state: lane[\state]
             );
@@ -2916,6 +3076,15 @@
         f[\release] = (f[\release] ? 0.6).clip(0.02, 10.0);
         f[\brightness] = (f[\brightness] ? 0.55).clip(0, 1);
         f[\grit] = (f[\grit] ? 0.08).clip(0, 0.5);
+        if(lane[\harmonium].isNil, {
+            lane[\harmonium] = (
+                source: 4, formation: 0, num: 10, rolloff: 1.0, rq: 0.02, bandRes: 0.3,
+                timbre: 0.5, ouMode: 0, pulseWidth: 0.5, rmMix: 0.0, rmHz: 30, rmRatio: 1.0,
+                rmTrack: 0, fmMix: 0.0, fmIndex: 0.1, fmRatio: 1.0, subAmp: 0.0, subOct1: 0,
+                subOct2: 0, swirlDepth: 0.4, swirlRate: 0.05, ampShimmer: 0.3, wet: 0.6,
+                envDecay: 2.5, envRelease: 1.2
+            );
+        });
         if(d.notNil) {
             d[\channel] = (d[\channel] ? index).clip(0, 15);
             d[\velocity] = (d[\velocity] ? 82).clip(24, 126);

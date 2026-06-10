@@ -48,7 +48,7 @@ Vital/Vitalium is treated as a realtime external JACK/MIDI instrument, not as an
 
 Use `eap-install-vitalium` on the Pi to build and install Vitalium LV2 plus the `jalv` host and MIDI bridge dependencies. Vital remains visible on the engine selector and is started/routed on demand when a generated scene chooses it.
 
-On the Scales / Root Note page, engine row 4 maps left to right as: Any, Plaits, Rings, Passersby, Molly, Dexed, Vital/Vitalium. VCV Rack infrastructure remains in the stack, but VCV is not currently exposed as a selectable scene engine.
+On the Scales / Root Note page, engine row 4 maps left to right (pads 41–46) as: Plaits, Rings, Passersby, Molly, FM7, Harmonium. VCV Rack infrastructure remains in the stack, but VCV is not currently exposed as a selectable scene engine.
 
 ## VCV Rack Integration
 
