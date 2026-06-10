@@ -1395,19 +1395,31 @@ def _profile_builders() -> Dict[Profile, Callable[[Any, LaneCfg, random.Random, 
 PROFILE_BUILDERS = _profile_builders()
 
 
+def _density_event_target(cfg: LaneCfg, profile: str) -> int:
+    modifier = str(cfg.get("modifier", "harmonic"))
+    density = max(0.05, min(float(cfg.get("density", 1.0)), 1.0))
+    material = str(cfg.get("material", ""))
+    if modifier == "percussive":
+        return max(3, min(14, round(2 + density * 12)))
+    if modifier == "chaos":
+        base_max = 8 if material == "rings" else 10
+        if profile in {"sparseBolt", "spectralDrift"}:
+            base_max = max(5, base_max - 2)
+        return max(2, min(base_max, round(1 + density * (base_max - 1))))
+    if modifier == "drone":
+        return max(1, min(4, round(1 + density * 3)))
+    return max(2, min(10, round(1 + density * 9)))
+
+
 def _event_cap(cfg: LaneCfg, profile: str) -> Optional[int]:
     modifier = str(cfg.get("modifier", "harmonic"))
-    material = str(cfg.get("material", ""))
-    if modifier != "chaos":
-        return None
-    base = 12
-    if material == "rings":
-        base = 8
-    elif material in {"plaits", "molly", "fm7"}:
-        base = 10
-    if profile in {"deBruijnGlitch", "grainCloud", "logisticSwarm", "microCluster"}:
-        base = max(5, base - 2)
-    return base
+    target = _density_event_target(cfg, profile)
+    tolerance = {
+        "percussive": 1,
+        "chaos": 1,
+        "drone": 0,
+    }.get(modifier, 1)
+    return max(1, target + tolerance)
 
 
 def _thin_events(events: List[Any], cap: int) -> List[Any]:
@@ -1421,18 +1433,13 @@ def _thin_events(events: List[Any], cap: int) -> List[Any]:
 
 def _event_floor(cfg: LaneCfg, profile: str) -> int:
     modifier = str(cfg.get("modifier", "harmonic"))
-    density = max(0.05, min(float(cfg.get("density", 1.0)), 1.0))
-    if modifier == "percussive":
-        return max(5, min(12, round(4 + density * 8)))
-    if modifier == "chaos":
-        material = str(cfg.get("material", ""))
-        upper = 7 if material == "rings" else 9
-        if profile in {"sparseBolt", "spectralDrift"}:
-            upper = max(5, upper - 1)
-        return max(4, min(upper, round(3 + density * 6)))
-    if modifier == "drone":
-        return max(2, min(4, round(1 + density * 4)))
-    return max(4, min(8, round(3 + density * 6)))
+    target = _density_event_target(cfg, profile)
+    tolerance = {
+        "percussive": 1,
+        "chaos": 1,
+        "drone": 0,
+    }.get(modifier, 1)
+    return max(1, target - tolerance)
 
 
 def _add_floor_hits(
