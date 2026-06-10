@@ -157,7 +157,7 @@ def _configure_pattern_for_modifier(p: Any, cfg: LaneCfg) -> int:
 
 def _drone_event_budget(cfg: LaneCfg) -> int:
     material = str(cfg.get("material", "rings"))
-    if material in {"rings", "passersby", "molly"}:
+    if material in {"rings", "passersby", "molly", "fm7"}:
         return 2
     if material in {"vital", "vcv", "dexed"}:
         return 2
@@ -1403,7 +1403,7 @@ def _event_cap(cfg: LaneCfg, profile: str) -> Optional[int]:
     base = 12
     if material == "rings":
         base = 8
-    elif material in {"plaits", "molly"}:
+    elif material in {"plaits", "molly", "fm7"}:
         base = 10
     if profile in {"deBruijnGlitch", "grainCloud", "logisticSwarm", "microCluster"}:
         base = max(5, base - 2)

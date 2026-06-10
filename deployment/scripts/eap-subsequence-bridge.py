@@ -38,8 +38,7 @@ ENGINE_CODES = {
     2: "rings",
     3: "passersby",
     4: "molly",
-    5: "dexed",
-    6: "vital",
+    5: "fm7",
 }
 
 

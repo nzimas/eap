@@ -91,8 +91,8 @@ RGB_GRID_FX_LOCKED_ACTIVE = (126, 0, 0)
 RGB_GRID_FX_LOCK_FLASH = (126, 0, 0)
 
 ROOT_NOTES = [0, 2, 4, 5, 7, 9, 11]
-ENGINE_CODES = [1, 2, 3, 4, 5, 6]
-ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 7)]
+ENGINE_CODES = [1, 2, 3, 4, 5]
+ENGINE_PAD_POSITIONS = [(4, col) for col in range(1, 6)]
 AIRWINDOWS_FX = [
     "TapeDelay2", "PitchDelay", "Doublelay", "SampleDelay", "Melt", "ADT", "StarChild2", "TakeCare",
     "RingModulator", "Dubly3", "GalacticVibe", "Pafnuty2", "PitchNasty", "GuitarConditioner", "GlitchShifter", "Gringer",

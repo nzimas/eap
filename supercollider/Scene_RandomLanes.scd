@@ -58,7 +58,7 @@
     ];
 
     ~soundModifierSymbols = [\percussive, \drone, \chaos];
-    ~sourceEngineSymbols = [\plaits, \rings, \passersby, \molly, \dexed, \vital];
+    ~sourceEngineSymbols = [\plaits, \rings, \passersby, \molly, \fm7];
 
     ~modifierFromCode = { |self, code|
         var index = code.asInteger;
@@ -635,6 +635,60 @@
             signal = RLPF.ar(signal, env.linlin(0, 1, filterEnvLow, peakMod), rq) * env;
             signal = signal * (1 + (reverbMix.clip(0, 0.7) * 0.18));
             Out.ar(out, Pan2.ar(tanh(signal * amp * 2.1).softclip, pan));
+        }).add;
+
+        SynthDef(\eapLaneFM7Note, { |out = 0, freq = 220, algorithm = 0,
+            ratio1 = 1, ratio2 = 2, ratio3 = 3, ratio4 = 1.5, ratio5 = 4, ratio6 = 0.5,
+            opAmp1 = 1, opAmp2 = 0.45, opAmp3 = 0.28, opAmp4 = 0.20, opAmp5 = 0.16, opAmp6 = 0.10,
+            carrier1 = 1, carrier2 = 0, carrier3 = 0, carrier4 = 0, carrier5 = 0, carrier6 = 0,
+            index1 = 0.5, index2 = 0.25, index3 = 0.14, feedback = 0.0,
+            attack = 0.01, decay = 0.8, sustain = 0.35, release = 0.6,
+            brightness = 0.55, grit = 0.12, amp = 0.1, pan = 0,
+            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
+            var alg, lfo, drift, bright, fb, idx1, idx2, idx3, ratios, amps, ctrls, mods, sigs, carriers, sig, env;
+            var e1, e2, e3, e4, e5, e6;
+            alg = algorithm.clip(0, 7);
+            lfo = Select.kr(modShape.clip(0, 3), [
+                SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
+            ]);
+            drift = LFNoise1.kr((modRate * 0.47).max(0.04));
+            bright = (brightness + (lfo * modDepth * 0.35) + (drift * modRand * 0.24)).clip(0, 1);
+            idx1 = (index1 + (lfo.abs * modDepth * 1.2) + (drift.abs * modRand * 0.65)).clip(0, 9.5);
+            idx2 = (index2 + (lfo.abs * modDepth * 0.9) + (drift.abs * modRand * 0.45)).clip(0, 7.5);
+            idx3 = (index3 + (lfo.abs * modDepth * 0.7) + (drift.abs * modRand * 0.35)).clip(0, 6.0);
+            fb = (feedback + (drift.abs * modRand * 0.35)).clip(0, 3.0);
+            ratios = [ratio1, ratio2, ratio3, ratio4, ratio5, ratio6].collect({ |r| r.clip(0.125, 16) });
+            amps = [opAmp1, opAmp2, opAmp3, opAmp4, opAmp5, opAmp6].collect({ |a| a.clip(0, 1.4) });
+            e1 = EnvGen.kr(Env.adsr(attack.max(0.001), decay.max(0.02), sustain.clip(0, 1), release.max(0.02), curve: -4), doneAction: 0);
+            e2 = EnvGen.kr(Env.adsr((attack * 0.65).max(0.001), (decay * 0.75).max(0.02), (sustain * 0.8).clip(0, 1), (release * 0.72).max(0.02), curve: -4), doneAction: 0);
+            e3 = EnvGen.kr(Env.adsr((attack * 0.45).max(0.001), (decay * 0.55).max(0.02), (sustain * 0.55).clip(0, 1), (release * 0.55).max(0.02), curve: -4), doneAction: 0);
+            e4 = EnvGen.kr(Env.adsr((attack * 0.35).max(0.001), (decay * 0.42).max(0.02), (sustain * 0.45).clip(0, 1), (release * 0.45).max(0.02), curve: -4), doneAction: 0);
+            e5 = EnvGen.kr(Env.adsr((attack * 0.28).max(0.001), (decay * 0.32).max(0.02), (sustain * 0.35).clip(0, 1), (release * 0.38).max(0.02), curve: -4), doneAction: 0);
+            e6 = EnvGen.kr(Env.adsr((attack * 0.22).max(0.001), (decay * 0.25).max(0.02), (sustain * 0.25).clip(0, 1), (release * 0.32).max(0.02), curve: -4), doneAction: 0);
+            ctrls = [
+                [Lag.kr(freq * ratios[0], 0.01), 0, amps[0] * e1],
+                [Lag.kr(freq * ratios[1], 0.01), 0, amps[1] * e2],
+                [Lag.kr(freq * ratios[2], 0.01), 0, amps[2] * e3],
+                [Lag.kr(freq * ratios[3], 0.01), 0, amps[3] * e4],
+                [Lag.kr(freq * ratios[4], 0.01), 0, amps[4] * e5],
+                [Lag.kr(freq * ratios[5], 0.01), 0, amps[5] * e6]
+            ];
+            mods = [
+                [Select.kr(alg, [fb, 0, 0, fb, 0, fb * 0.35, 0, fb * 0.6]), Select.kr(alg, [idx1, idx1, 0, 0, idx2, 0, idx1, idx1]), Select.kr(alg, [idx2, 0, idx1, idx2, 0, idx1, 0, 0]), Select.kr(alg, [0, 0, 0, idx3, 0, 0, idx2, 0]), 0, Select.kr(alg, [0, 0, 0, 0, idx3, 0, 0, idx2])],
+                [0, Select.kr(alg, [0, fb, fb, 0, 0, 0, fb, 0]), Select.kr(alg, [0, idx2, idx1, 0, idx1, idx2, 0, idx3]), Select.kr(alg, [0, 0, idx2, 0, 0, 0, idx2, 0]), 0, 0],
+                [0, 0, Select.kr(alg, [0, 0, fb, 0, fb, 0, 0, fb * 0.25]), Select.kr(alg, [0, idx2, 0, idx1, idx1, idx3, idx1, idx2]), Select.kr(alg, [0, 0, 0, idx2, 0, 0, 0, 0]), 0],
+                [0, 0, 0, Select.kr(alg, [0, 0, 0, fb, 0, fb, 0, 0]), Select.kr(alg, [0, 0, 0, idx2, idx1, idx2, idx3, idx1]), Select.kr(alg, [0, 0, 0, 0, idx2, 0, 0, 0])],
+                [0, 0, 0, 0, Select.kr(alg, [0, 0, 0, 0, fb, 0, fb * 0.5, 0]), Select.kr(alg, [0, 0, 0, 0, idx1, idx1, idx2, idx3])],
+                [0, 0, 0, 0, 0, Select.kr(alg, [0, 0, 0, 0, 0, fb, 0, fb])]
+            ];
+            sigs = FM7.ar(ctrls, mods);
+            carriers = [carrier1, carrier2, carrier3, carrier4, carrier5, carrier6];
+            sig = Mix.fill(6, { |i| sigs[i] * carriers[i].clip(0, 1) });
+            sig = HPF.ar(LeakDC.ar(sig), 22);
+            sig = LPF.ar(sig, bright.linexp(0, 1, 1200, 18000));
+            sig = XFade2.ar(sig, Fold.ar(sig * grit.linlin(0, 1, 1.0, 3.4), -0.7, 0.7), (grit.clip(0, 1) * 2) - 1);
+            env = EnvGen.kr(Env.linen(0.001, (attack + decay).max(0.03), release.max(0.02)), doneAction: 2);
+            Out.ar(out, Pan2.ar(Limiter.ar(tanh(sig * 1.8) * amp * env, 0.95), pan));
         }).add;
 
         SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, sendOut = 0, gridOut = 0,
@@ -1306,7 +1360,7 @@
 
     ~randomLane = { |self, index, total, modifier = nil, adaptive = nil|
         var enginePreference = self[\sourceEnginePreference];
-        var materialPool = [\plaits, \plaits, \rings, \rings, \passersby, \passersby, \molly];
+        var materialPool = [\plaits, \plaits, \rings, \rings, \passersby, \passersby, \molly, \fm7, \fm7];
         var materials;
         var fx = self[\chooseFxBackend].value(self, index, total, modifier);
         var register = [[31, 52], [36, 62], [45, 72], [52, 84]].choose;
@@ -1363,6 +1417,30 @@
             filterRq: self[\rand].value(self, 0.24, 0.92),
             toneTilt: self[\rand].value(self, 0.0, 1.0)
         );
+        var fm7 = (
+            algorithm: rrand(0, 7),
+            ratios: [
+                [1, 2, 3, 4, 5, 6],
+                [1, 1.5, 2, 2.5, 3, 4],
+                [0.5, 1, 2, 3, 4, 6],
+                [1, 2, 2.01, 3, 4, 5],
+                [1, 1.25, 1.5, 2, 3, 6],
+                [0.5, 0.75, 1, 1.5, 2, 4]
+            ].choose,
+            opAmps: [1.0, self[\rand].value(self, 0.28, 0.72), self[\rand].value(self, 0.16, 0.58),
+                self[\rand].value(self, 0.10, 0.42), self[\rand].value(self, 0.06, 0.34), self[\rand].value(self, 0.04, 0.26)],
+            carriers: [[1, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0], [1, 0, 0, 1, 0, 0], [1, 1, 0, 1, 0, 0]].choose,
+            index1: self[\rand].value(self, 0.35, 2.8),
+            index2: self[\rand].value(self, 0.12, 1.7),
+            index3: self[\rand].value(self, 0.04, 1.0),
+            feedback: self[\rand].value(self, 0.0, 0.75),
+            attack: self[\exprand].value(self, 0.004, 0.35),
+            decay: self[\exprand].value(self, 0.12, 2.6),
+            sustain: self[\rand].value(self, 0.08, 0.62),
+            release: self[\exprand].value(self, 0.10, 3.2),
+            brightness: self[\rand].value(self, 0.25, 0.92),
+            grit: self[\rand].value(self, 0.0, 0.18)
+        );
         var clouds = (
             pit: [-12, -7, -5, 0, 7, 12].choose,
             pos: self[\rand].value(self, 0.05, 0.92),
@@ -1398,7 +1476,7 @@
         );
         var dexedPatchSeed = dexed[\patchSeed];
         var dexedPatchInfo = "";
-        var dexedAvailable = self[\refreshDexed].value(self);
+        var dexedAvailable = false;
         var sourceEngine = \none;
         var freshPool;
         var avoidPool;
@@ -1414,7 +1492,7 @@
         );
         var vitalPatchSeed = vital[\patchSeed];
         var vitalPatchInfo = "";
-        var vitalAvailable = if(enginePreference == \vital, { self[\vitalRuntimeAvailable].value(self) }, { self[\refreshVital].value(self) });
+        var vitalAvailable = false;
         var vcv = (
             velocity: self[\rand].value(self, 48, 102).round(1),
             durScale: self[\exprand].value(self, 0.30, 3.2),
@@ -1427,17 +1505,9 @@
         var vcvPatchInfo = "";
         var vcvAvailable = false;
         var cpuClass = \normal;
-        if(dexedAvailable or: { enginePreference == \dexed }, {
-            materialPool = materialPool ++ [\dexed, \dexed];
-        });
-        if(vitalAvailable or: { enginePreference == \vital }, {
-            materialPool = materialPool ++ [\vital, \vital];
-        });
         switch(modifier,
             \percussive, {
-                materialPool = [\plaits, \plaits, \plaits, \plaits, \rings, \rings, \rings, \passersby, \passersby];
-                if(dexedAvailable or: { enginePreference == \dexed }, { materialPool = materialPool ++ [\dexed, \dexed]; });
-                if(vitalAvailable or: { enginePreference == \vital }, { materialPool = materialPool ++ [\vital]; });
+                materialPool = [\plaits, \plaits, \plaits, \plaits, \rings, \rings, \rings, \passersby, \passersby, \fm7, \fm7];
                 register = [[36, 60], [38, 64], [43, 67], [48, 72]].choose;
                 minGap = minGap * 0.55;
                 gap = self[\rand].value(self, 0.09, 0.42);
@@ -1470,6 +1540,21 @@
                 passersby[\air] = self[\exprand].value(self, 0.002, 0.022);
                 passersby[\fm1Amount] = self[\rand].value(self, 0.0, 0.10);
                 passersby[\fm2Amount] = self[\rand].value(self, 0.0, 0.08);
+                fm7[\algorithm] = [0, 1, 2, 6, 7].choose;
+                fm7[\ratios] = [[1, 2, 3, 4, 6, 8], [1, 1.5, 2, 3, 5, 7], [0.5, 1, 2, 4, 8, 12]].choose;
+                fm7[\opAmps] = [1.0, self[\rand].value(self, 0.38, 0.78), self[\rand].value(self, 0.20, 0.55),
+                    self[\rand].value(self, 0.06, 0.34), self[\rand].value(self, 0.02, 0.24), self[\rand].value(self, 0.0, 0.18)];
+                fm7[\carriers] = [[1, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0]].choose;
+                fm7[\index1] = self[\rand].value(self, 1.2, 5.5);
+                fm7[\index2] = self[\rand].value(self, 0.35, 3.2);
+                fm7[\index3] = self[\rand].value(self, 0.08, 1.8);
+                fm7[\feedback] = self[\rand].value(self, 0.0, 1.6);
+                fm7[\attack] = self[\exprand].value(self, 0.002, 0.035);
+                fm7[\decay] = self[\exprand].value(self, 0.07, 0.55);
+                fm7[\sustain] = self[\rand].value(self, 0.0, 0.12);
+                fm7[\release] = self[\exprand].value(self, 0.04, 0.35);
+                fm7[\brightness] = self[\rand].value(self, 0.45, 0.98);
+                fm7[\grit] = self[\rand].value(self, 0.02, 0.26);
                 rings = (
                     model: [0, 0, 1, 2].choose,
                     poly: 1,
@@ -1499,7 +1584,7 @@
                 });
             },
             \drone, {
-                materialPool = [\rings, \rings, \rings, \passersby, \passersby, \plaits, \molly, \molly];
+                materialPool = [\rings, \rings, \rings, \passersby, \passersby, \plaits, \molly, \molly, \fm7, \fm7];
                 register = [[24, 48], [28, 55], [31, 58]].choose;
                 minGap = minGap * 1.35;
                 gap = self[\rand].value(self, 0.65, 2.2);
@@ -1519,6 +1604,19 @@
                 molly[\envDecay] = self[\exprand].value(self, 1.2, 5.5);
                 molly[\envSustain] = self[\rand].value(self, 0.72, 0.98);
                 molly[\envRelease] = self[\exprand].value(self, 2.5, 12.0);
+                fm7[\algorithm] = [2, 3, 4, 5, 7].choose;
+                fm7[\ratios] = [[0.5, 1, 1.5, 2, 3, 4], [1, 1.25, 1.5, 2, 2.5, 3], [0.25, 0.5, 1, 2, 3, 5]].choose;
+                fm7[\carriers] = [[1, 1, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0], [1, 1, 0, 1, 0, 0]].choose;
+                fm7[\index1] = self[\rand].value(self, 0.18, 1.5);
+                fm7[\index2] = self[\rand].value(self, 0.05, 0.8);
+                fm7[\index3] = self[\rand].value(self, 0.02, 0.45);
+                fm7[\feedback] = self[\rand].value(self, 0.0, 0.55);
+                fm7[\attack] = self[\exprand].value(self, 0.35, 3.8);
+                fm7[\decay] = self[\exprand].value(self, 2.5, 12.0);
+                fm7[\sustain] = self[\rand].value(self, 0.55, 0.96);
+                fm7[\release] = self[\exprand].value(self, 2.0, 9.5);
+                fm7[\brightness] = self[\rand].value(self, 0.18, 0.74);
+                fm7[\grit] = self[\rand].value(self, 0.0, 0.10);
                 rings = (
                     model: [0, 1, 2, 2].choose,
                     poly: [1, 2, 2, 4].choose,
@@ -1544,7 +1642,7 @@
                 });
             },
             \harmonic, {
-                materialPool = [\rings, \rings, \plaits, \plaits, \molly, \molly, \passersby];
+                materialPool = [\rings, \rings, \plaits, \plaits, \molly, \molly, \passersby, \fm7, \fm7];
                 register = [[36, 62], [40, 67], [45, 72]].choose;
                 gap = self[\rand].value(self, 0.18, 1.15);
                 restProb = self[\rand].value(self, 0.0, 0.04);
@@ -1560,6 +1658,19 @@
                 molly[\subOscLevel] = self[\rand].value(self, 0.15, 0.65);
                 passersby[\decay] = self[\exprand].value(self, 0.5, 4.5);
                 passersby[\reverbMix] = self[\rand].value(self, 0.18, 0.55);
+                fm7[\algorithm] = [0, 1, 3, 4, 6].choose;
+                fm7[\ratios] = [[1, 2, 3, 4, 5, 6], [1, 1.5, 2, 3, 4, 6], [0.5, 1, 2, 3, 5, 8], [1, 2, 2.01, 3, 4.01, 6]].choose;
+                fm7[\carriers] = [[1, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0], [1, 1, 0, 1, 0, 0]].choose;
+                fm7[\index1] = self[\rand].value(self, 0.45, 3.4);
+                fm7[\index2] = self[\rand].value(self, 0.18, 1.8);
+                fm7[\index3] = self[\rand].value(self, 0.04, 1.0);
+                fm7[\feedback] = self[\rand].value(self, 0.0, 1.0);
+                fm7[\attack] = self[\exprand].value(self, 0.01, 0.55);
+                fm7[\decay] = self[\exprand].value(self, 0.4, 3.8);
+                fm7[\sustain] = self[\rand].value(self, 0.24, 0.76);
+                fm7[\release] = self[\exprand].value(self, 0.5, 5.0);
+                fm7[\brightness] = self[\rand].value(self, 0.34, 0.92);
+                fm7[\grit] = self[\rand].value(self, 0.0, 0.16);
                 vital[\durScale] = self[\exprand].value(self, 0.8, 3.6);
                 vital[\octaveBias] = [-12, 0, 0, 12].choose;
                 vital[\patchProfile] = \harmonic;
@@ -1573,7 +1684,7 @@
                 });
             },
             \chaos, {
-                materialPool = [\passersby, \passersby, \plaits, \plaits, \rings, \rings, \molly];
+                materialPool = [\passersby, \passersby, \plaits, \plaits, \rings, \rings, \molly, \fm7, \fm7];
                 register = [[24, 96], [28, 88], [31, 84], [36, 96]].choose;
                 gap = self[\rand].value(self, 0.06, 0.52);
                 restProb = self[\rand].value(self, 0.04, 0.22);
@@ -1605,6 +1716,19 @@
                 rings[\bright] = self[\rand].value(self, 0.0, 1.0);
                 rings[\damp] = self[\rand].value(self, 0.05, 0.98);
                 rings[\model] = rrand(0, 3);
+                fm7[\algorithm] = rrand(0, 7);
+                fm7[\ratios] = [[1, 2, 3, 5, 7, 9], [0.5, 1, 1.5, 2.5, 4, 7], [1, 1.25, 2, 3.5, 5, 8], [0.25, 0.5, 1, 2, 4, 12]].choose;
+                fm7[\carriers] = [[1, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0], [1, 0, 1, 1, 0, 0], [1, 1, 0, 1, 1, 0]].choose;
+                fm7[\index1] = self[\rand].value(self, 0.5, 7.8);
+                fm7[\index2] = self[\rand].value(self, 0.15, 5.2);
+                fm7[\index3] = self[\rand].value(self, 0.05, 3.6);
+                fm7[\feedback] = self[\rand].value(self, 0.0, 2.2);
+                fm7[\attack] = self[\exprand].value(self, 0.001, 0.28);
+                fm7[\decay] = self[\exprand].value(self, 0.04, 3.0);
+                fm7[\sustain] = self[\rand].value(self, 0.0, 0.55);
+                fm7[\release] = self[\exprand].value(self, 0.04, 2.5);
+                fm7[\brightness] = self[\rand].value(self, 0.12, 1.0);
+                fm7[\grit] = self[\rand].value(self, 0.0, 0.38);
                 vital[\velocity] = self[\rand].value(self, 28, 127).round(1);
                 vital[\durScale] = self[\exprand].value(self, 0.04, 2.4);
                 vital[\octaveBias] = [-36, -24, -12, 0, 12, 24, 36].choose;
@@ -1645,6 +1769,10 @@
             materialPool = [enginePreference];
         });
         materials = if(materialPool.isEmpty, { [] }, { [materialPool.choose] });
+        materials = materials.reject({ |source| [\dexed, \vital, \vcv].includes(source) });
+        if(materials.isEmpty, {
+            materials = [\fm7];
+        });
         if(enginePreference.isNil and: { (modifier != \drone) and: { modifier != \harmonic } }, {
             materials = materials.reject({ |source| source == \molly });
             while({ materials.isEmpty and: { materialPool.notEmpty } }, {
@@ -1667,14 +1795,6 @@
                 \chaos, { \medium },
                 { \normal }
             );
-        });
-        if(materials.includes(\dexed), {
-            dexedPatchInfo = self[\queueDexedPatch].value(self, dexedPatchSeed, index - 1, dexed[\patchProfile]);
-            dexed[\patchInfo] = dexedPatchInfo;
-        });
-        if(materials.includes(\vital), {
-            vitalPatchInfo = self[\queueVitalPatch].value(self, vitalPatchSeed, index, vital[\patchProfile]);
-            vital[\patchInfo] = vitalPatchInfo;
         });
         if(materials.includes(\vcv), {
             vcvPatchInfo = self[\loadVcvPatch].value(self, vcvPatchSeed, index, vcv[\patchProfile]);
@@ -1732,6 +1852,7 @@
             rings: rings,
             molly: molly,
             passersby: passersby,
+            fm7: fm7,
             dexed: dexed,
             vital: vital,
             vcv: vcv,
@@ -2020,6 +2141,35 @@
                     \toneTilt, if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { p[\toneTilt] }),
                     \amp, lane[\amp] * accent * (if(isChaos, { self[\rand].value(self, 0.35, 1.15) }, { 0.85 })),
                     \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.70 }), if(isChaos, { 0.95 }, { 0.70 })) + panBias).clip(-1, 1),
+                    \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
+                ]);
+            };
+            if(source == \fm7) {
+                var f = lane[\fm7];
+                var ratios = f[\ratios] ? [1, 2, 3, 4, 5, 6];
+                var opAmps = f[\opAmps] ? [1, 0.45, 0.28, 0.2, 0.16, 0.1];
+                var carriers = f[\carriers] ? [1, 0, 0, 0, 0, 0];
+                Synth.head(lane[\group], \eapLaneFM7Note, [
+                    \out, lane[\sourceBus].index, \freq, pitch.midicps,
+                    \algorithm, if(isChaos, { rrand(0, 7) }, { f[\algorithm] }),
+                    \ratio1, ratios[0], \ratio2, ratios[1], \ratio3, ratios[2],
+                    \ratio4, ratios[3], \ratio5, ratios[4], \ratio6, ratios[5],
+                    \opAmp1, opAmps[0], \opAmp2, opAmps[1], \opAmp3, opAmps[2],
+                    \opAmp4, opAmps[3], \opAmp5, opAmps[4], \opAmp6, opAmps[5],
+                    \carrier1, carriers[0], \carrier2, carriers[1], \carrier3, carriers[2],
+                    \carrier4, carriers[3], \carrier5, carriers[4], \carrier6, carriers[5],
+                    \index1, if(isChaos, { (f[\index1] * self[\rand].value(self, 0.65, 1.45)).clip(0, 8.5) }, { f[\index1] }),
+                    \index2, if(isChaos, { (f[\index2] * self[\rand].value(self, 0.55, 1.65)).clip(0, 6.0) }, { f[\index2] }),
+                    \index3, if(isChaos, { (f[\index3] * self[\rand].value(self, 0.45, 1.8)).clip(0, 4.0) }, { f[\index3] }),
+                    \feedback, if(isChaos, { (f[\feedback] + self[\rand].value(self, 0.0, 0.8)).clip(0, 2.6) }, { f[\feedback] }),
+                    \attack, if(isChaos, { self[\exprand].value(self, 0.001, 0.22) }, { f[\attack] }),
+                    \decay, (if(isChaos, { self[\exprand].value(self, 0.035, 2.6) }, { f[\decay] })) * decayScale * sustainScale,
+                    \sustain, if(isPerc, { (f[\sustain] ? 0.05).clip(0, 0.18) }, { f[\sustain] }),
+                    \release, (if(isChaos, { self[\exprand].value(self, 0.035, 2.2) }, { f[\release] })) * sustainScale,
+                    \brightness, if(isChaos, { self[\rand].value(self, 0.12, 1.0) }, { f[\brightness] }),
+                    \grit, if(isChaos, { (f[\grit] + self[\rand].value(self, 0.0, 0.22)).clip(0, 0.48) }, { f[\grit] }),
+                    \amp, lane[\amp] * accent * (if(isPerc, { 0.82 }, { if(isChaos, { self[\rand].value(self, 0.25, 0.95) }, { 0.72 }) })),
+                    \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.72 }), if(isChaos, { 0.95 }, { 0.72 })) + panBias).clip(-1, 1),
                     \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
@@ -2418,7 +2568,7 @@
                 ringsModel: lane[\ringsModel], rings: if(lane[\rings].notNil, { lane[\rings].copy }, { nil }),
                 soundModifier: lane[\soundModifier], lastDegree: lane[\lastDegree],
                 sourceEngine: lane[\sourceEngine], adaptive: if(lane[\adaptive].notNil, { lane[\adaptive].copy }, { nil }),
-                molly: lane[\molly].copy, passersby: lane[\passersby].copy,
+                molly: lane[\molly].copy, passersby: lane[\passersby].copy, fm7: lane[\fm7].copy,
                 dexed: lane[\dexed].copy, vital: lane[\vital].copy, vcv: lane[\vcv].copy,
                 clouds: lane[\clouds].copy, state: lane[\state]
             );
@@ -2428,6 +2578,7 @@
     ~prepareLoadedLane = { |self, lane, index|
         var m = lane[\molly];
         var p = lane[\passersby];
+        var f = lane[\fm7];
         var d = lane[\dexed];
         var v = lane[\vital];
         var r = lane[\vcv];
@@ -2436,6 +2587,8 @@
         if(lane[\materials].notNil and: { lane[\materials].size > 1 }, {
             lane[\materials] = [lane[\materials][0]];
         });
+        lane[\materials] = (lane[\materials] ? [\fm7]).reject({ |source| [\dexed, \vital, \vcv].includes(source) });
+        if(lane[\materials].isEmpty, { lane[\materials] = [\fm7]; });
         lane[\group] = nil;
         lane[\sourceBus] = nil;
         lane[\buses] = nil;
@@ -2458,7 +2611,7 @@
         lane[\timbreMotion] = lane[\timbreMotion] ? 0.0;
         lane[\reverbSend] = lane[\reverbSend] ? 0.5;
         lane[\transpose] = (lane[\transpose] ? 0).asInteger.clip(-36, 36);
-        lane[\sourceEngine] = lane[\sourceEngine] ? \none;
+        lane[\sourceEngine] = if(self[\sourceEngineSymbols].includes(lane[\sourceEngine]), { lane[\sourceEngine] }, { \fm7 });
         lane[\adaptive] = lane[\adaptive] ? (
             siblingCount: 0,
             avoidMaterials: [],
@@ -2512,6 +2665,33 @@
             p[\filterRq] = (p[\filterRq] ? 0.7).clip(0.24, 0.92);
             p[\toneTilt] = (p[\toneTilt] ? 0.5).clip(0, 1);
         };
+        if(f.isNil, {
+            lane[\fm7] = (
+                algorithm: 0, ratios: [1, 2, 3, 4, 5, 6], opAmps: [1, 0.45, 0.28, 0.2, 0.16, 0.1],
+                carriers: [1, 0, 0, 0, 0, 0], index1: 1.2, index2: 0.45, index3: 0.16,
+                feedback: 0.0, attack: 0.01, decay: 0.8, sustain: 0.35, release: 0.6,
+                brightness: 0.55, grit: 0.08
+            );
+            f = lane[\fm7];
+        });
+        f[\algorithm] = (f[\algorithm] ? 0).asInteger.clip(0, 7);
+        f[\ratios] = (f[\ratios] ? [1, 2, 3, 4, 5, 6]).collect({ |ratio| ratio.asFloat.clip(0.125, 16) });
+        while({ f[\ratios].size < 6 }, { f[\ratios] = f[\ratios].add(1); });
+        f[\opAmps] = (f[\opAmps] ? [1, 0.45, 0.28, 0.2, 0.16, 0.1]).collect({ |opAmp| opAmp.asFloat.clip(0, 1.4) });
+        while({ f[\opAmps].size < 6 }, { f[\opAmps] = f[\opAmps].add(0.1); });
+        f[\carriers] = (f[\carriers] ? [1, 0, 0, 0, 0, 0]).collect({ |carrier| carrier.asFloat.clip(0, 1) });
+        while({ f[\carriers].size < 6 }, { f[\carriers] = f[\carriers].add(0); });
+        if(f[\carriers].sum <= 0, { f[\carriers][0] = 1; });
+        f[\index1] = (f[\index1] ? 1.2).clip(0, 8.5);
+        f[\index2] = (f[\index2] ? 0.45).clip(0, 6.0);
+        f[\index3] = (f[\index3] ? 0.16).clip(0, 4.0);
+        f[\feedback] = (f[\feedback] ? 0).clip(0, 2.6);
+        f[\attack] = (f[\attack] ? 0.01).clip(0.001, 4.0);
+        f[\decay] = (f[\decay] ? 0.8).clip(0.02, 12.0);
+        f[\sustain] = (f[\sustain] ? 0.35).clip(0, 1);
+        f[\release] = (f[\release] ? 0.6).clip(0.02, 10.0);
+        f[\brightness] = (f[\brightness] ? 0.55).clip(0, 1);
+        f[\grit] = (f[\grit] ? 0.08).clip(0, 0.5);
         if(d.notNil) {
             d[\channel] = (d[\channel] ? index).clip(0, 15);
             d[\velocity] = (d[\velocity] ? 82).clip(24, 126);
@@ -2694,7 +2874,8 @@
                 ++ " timbreMotion=" ++ (lane[\timbreMotion] ? 0.0).round(0.001)
                 ++ " reverbSend=" ++ (lane[\reverbSend] ? 0.5).round(0.001)
                 ++ " transpose=" ++ (lane[\transpose] ? 0)
-                ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
+                ++ " plaits=" ++ lane[\plaitsModels].asString
+                ++ " fm7Alg=" ++ ((lane[\fm7] ? ())[\algorithm] ? \none)).postln;
                 1;
             });
         });
@@ -2745,7 +2926,8 @@
                     " modifier=" ++ (lane[\soundModifier] ? \default)
                     ++ " sourceEngine=" ++ (self[\sourceEnginePreference] ? \none)
                     ++ " adaptiveSiblings=" ++ ((lane[\adaptive] ? ())[\siblingCount] ? 0)
-                    ++ " plaits=" ++ lane[\plaitsModels].asString).postln;
+                    ++ " plaits=" ++ lane[\plaitsModels].asString
+                    ++ " fm7Alg=" ++ ((lane[\fm7] ? ())[\algorithm] ? \none)).postln;
             });
             ("EAP random scene set active: " ++ n ++ " independent lanes").postln;
             1;
@@ -2760,7 +2942,6 @@
         self[\reverbBus] = Bus.audio(s, 2);
         self[\makeSynthDefs].value(self);
         s.sync;
-        self[\refreshDexed].value(self);
         self[\reverbValues] = [0.24, 0.55, 0.45, 0.36, 0.25, 0.74, 0.24, 0.62];
         self[\masterValues] = [0.82, 0.0, 1.0, 0.12, 0.0];
         self[\masterGroup] = Group.after(self[\group]);

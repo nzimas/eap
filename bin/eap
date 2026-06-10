@@ -77,8 +77,7 @@ def main(argv: list[str]) -> int:
         "rings": 2,
         "passersby": 3,
         "molly": 4,
-        "dexed": 5,
-        "vital": 6,
+        "fm7": 5,
     }
     parser.add_argument(
         "--seedscene",
