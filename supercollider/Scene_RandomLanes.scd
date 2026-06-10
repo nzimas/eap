@@ -555,7 +555,10 @@
             modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0,
             strike = 1.0, exciterDecay = 0.09|
             var trig, exciter, sig, env, lfo, drift, st, br, da, po, burst;
-            trig = Trig1.kr(1, 0.01);
+            // Audio-rate single strike. With the engine's 4096-sample block, a kr
+            // trigger/exciter cannot resolve a sub-100ms burst (control period ~85ms),
+            // which left MiRings barely excited and effectively silent. Drive it at ar.
+            trig = Impulse.ar(0);
             lfo = Select.kr(modShape.clip(0, 3), [
                 SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
             ]);
@@ -564,10 +567,10 @@
             br = (bright + (lfo * modDepth * 0.28) + (drift * modRand * 0.22)).clip(0, 1);
             da = (damp + (lfo * modDepth * 0.20) + (drift * modRand * 0.18)).clip(0, 1);
             po = (pos + (lfo * modDepth * 0.30) + (drift * modRand * 0.22)).clip(0, 1);
-            burst = Decay2.kr(trig, 0.0015, exciterDecay.clip(0.03, 0.18));
-            exciter = HPF.ar((PinkNoise.ar(0.03) + WhiteNoise.ar(0.02)) * burst * strike.clip(0.6, 1.8), 110);
+            burst = Decay2.ar(trig, 0.0008, exciterDecay.clip(0.03, 0.18));
+            exciter = HPF.ar((PinkNoise.ar(0.6) + WhiteNoise.ar(0.4)) * burst * strike.clip(0.6, 1.8), 90);
             sig = MiRings.ar(exciter, trig, pitch, st, br, da, po, model, poly, 1, 0);
-            env = EnvGen.kr(Env.linen(0.002, envDecay.max(0.04), envRelease.max(0.02)), doneAction: 2);
+            env = EnvGen.ar(Env.linen(0.002, envDecay.max(0.04), envRelease.max(0.02)), doneAction: 2);
             sig = HPF.ar(LeakDC.ar(sig), 28);
             sig = Balance2.ar(sig[0], sig[1], pan, amp * strike.linlin(0.6, 1.8, 0.9, 1.2)) * env;
             Out.ar(out, LeakDC.ar(sig));
@@ -1650,8 +1653,8 @@
                     bright: self[\rand].value(self, 0.22, 0.88),
                     damp: self[\rand].value(self, 0.35, 0.92),
                     pos: self[\rand].value(self, 0.08, 0.82),
-                    envDecay: self[\exprand].value(self, 8.0, 22.0),
-                    envRelease: self[\exprand].value(self, 1.4, 5.0)
+                    envDecay: self[\exprand].value(self, 3.0, 8.0),
+                    envRelease: self[\exprand].value(self, 0.8, 2.5)
                 );
                 vital[\durScale] = self[\exprand].value(self, 2.0, 7.0);
                 vital[\octaveBias] = [-24, -12, -12, 0].choose;
@@ -1793,6 +1796,122 @@
         });
         if(enginePreference.notNil, {
             materialPool = [enginePreference];
+        });
+        if(enginePreference == \rings, {
+            register = switch(modifier,
+                \percussive, { [[48, 72], [52, 79], [55, 84]].choose },
+                \drone, { [[40, 67], [45, 72], [48, 76]].choose },
+                \harmonic, { [[48, 72], [52, 79], [55, 84]].choose },
+                \chaos, { [[50, 79], [55, 84], [60, 88]].choose },
+                { [[48, 72], [52, 79], [55, 84]].choose }
+            );
+            gap = switch(modifier,
+                \percussive, { self[\rand].value(self, 0.08, 0.24) },
+                \drone, { self[\rand].value(self, 0.22, 0.58) },
+                \harmonic, { self[\rand].value(self, 0.10, 0.30) },
+                \chaos, { self[\rand].value(self, 0.05, 0.16) },
+                { gap }
+            );
+            pulse = switch(modifier,
+                \percussive, { self[\rand].value(self, 0.055, 0.12) },
+                \drone, { self[\rand].value(self, 0.18, 0.42) },
+                \harmonic, { self[\rand].value(self, 0.08, 0.18) },
+                \chaos, { self[\rand].value(self, 0.03, 0.11) },
+                { pulse }
+            );
+            restProb = switch(modifier,
+                \percussive, { self[\rand].value(self, 0.0, 0.05) },
+                \drone, { self[\rand].value(self, 0.0, 0.02) },
+                \harmonic, { self[\rand].value(self, 0.0, 0.03) },
+                \chaos, { self[\rand].value(self, 0.01, 0.07) },
+                { restProb.min(0.04) }
+            );
+            density = switch(modifier,
+                \percussive, { self[\rand].value(self, 0.82, 0.98) },
+                \drone, { self[\rand].value(self, 0.68, 0.88) },
+                \harmonic, { self[\rand].value(self, 0.76, 0.96) },
+                \chaos, { self[\rand].value(self, 0.82, 0.98) },
+                { density.max(0.75) }
+            );
+            densitySkew = switch(modifier,
+                \percussive, { self[\rand].value(self, 1.0, 1.35) },
+                \drone, { self[\rand].value(self, 0.95, 1.18) },
+                \harmonic, { self[\rand].value(self, 1.0, 1.28) },
+                \chaos, { self[\rand].value(self, 0.92, 1.18) },
+                { densitySkew.max(0.95) }
+            );
+            swing = switch(modifier,
+                \percussive, { self[\rand].value(self, 0.0, 0.18) },
+                \drone, { self[\rand].value(self, 0.0, 0.06) },
+                \harmonic, { self[\rand].value(self, 0.02, 0.16) },
+                \chaos, { self[\rand].value(self, 0.0, 0.18) },
+                { swing }
+            );
+            rhythmProfile = switch(modifier,
+                \percussive, { [\grid16, \shuffle16, \euclid, \rotateEuclid, \layeredEuclid, \weightedHits, \clusterCompress].choose },
+                \drone, { [\pulse, \swell].choose },
+                \harmonic, { [\motif, \pulseHarm, \arp].choose },
+                \chaos, { [\stutter, \flare, \grainCloud, \microCluster, \caSnapshot, \deBruijnGlitch, \logisticSwarm].choose },
+                { rhythmProfile }
+            );
+            rings = (
+                model: switch(modifier,
+                    \percussive, { [0, 1, 2].choose },
+                    \drone, { [1, 2, 2].choose },
+                    \harmonic, { [0, 1, 2].choose },
+                    \chaos, { [0, 1, 2, 3].choose },
+                    { rings[\model] }
+                ),
+                poly: switch(modifier,
+                    \percussive, { 1 },
+                    \drone, { [2, 2, 4].choose },
+                    \harmonic, { [1, 2, 2, 4].choose },
+                    \chaos, { [1, 2].choose },
+                    { rings[\poly] }
+                ),
+                struct: switch(modifier,
+                    \percussive, { self[\rand].value(self, 0.28, 0.72) },
+                    \drone, { self[\rand].value(self, 0.24, 0.66) },
+                    \harmonic, { self[\rand].value(self, 0.30, 0.74) },
+                    \chaos, { self[\rand].value(self, 0.22, 0.82) },
+                    { rings[\struct] }
+                ),
+                bright: switch(modifier,
+                    \percussive, { self[\rand].value(self, 0.55, 0.92) },
+                    \drone, { self[\rand].value(self, 0.42, 0.78) },
+                    \harmonic, { self[\rand].value(self, 0.50, 0.88) },
+                    \chaos, { self[\rand].value(self, 0.48, 0.95) },
+                    { rings[\bright] }
+                ),
+                damp: switch(modifier,
+                    \percussive, { self[\rand].value(self, 0.34, 0.72) },
+                    \drone, { self[\rand].value(self, 0.42, 0.82) },
+                    \harmonic, { self[\rand].value(self, 0.36, 0.74) },
+                    \chaos, { self[\rand].value(self, 0.28, 0.78) },
+                    { rings[\damp] }
+                ),
+                pos: switch(modifier,
+                    \percussive, { self[\rand].value(self, 0.18, 0.58) },
+                    \drone, { self[\rand].value(self, 0.20, 0.68) },
+                    \harmonic, { self[\rand].value(self, 0.20, 0.64) },
+                    \chaos, { self[\rand].value(self, 0.16, 0.72) },
+                    { rings[\pos] }
+                ),
+                envDecay: switch(modifier,
+                    \percussive, { self[\exprand].value(self, 0.10, 0.55) },
+                    \drone, { self[\exprand].value(self, 4.5, 12.0) },
+                    \harmonic, { self[\exprand].value(self, 0.75, 3.2) },
+                    \chaos, { self[\exprand].value(self, 0.20, 1.5) },
+                    { rings[\envDecay] }
+                ),
+                envRelease: switch(modifier,
+                    \percussive, { self[\exprand].value(self, 0.06, 0.22) },
+                    \drone, { self[\exprand].value(self, 1.2, 3.6) },
+                    \harmonic, { self[\exprand].value(self, 0.35, 1.4) },
+                    \chaos, { self[\exprand].value(self, 0.08, 0.55) },
+                    { rings[\envRelease] }
+                )
+            );
         });
         materials = if(materialPool.isEmpty, { [] }, { [materialPool.choose] });
         materials = materials.reject({ |source| [\dexed, \vital, \vcv].includes(source) });
@@ -2135,7 +2254,7 @@
                 );
                 var r = (
                     model: if(isChaos, { rrand(0, 3) }, { lane[\ringsModel] }),
-                    poly: if(isChaos, { [1, 2, 4, 8].choose }, { baseR[\poly] ? [1, 2, 4].choose }),
+                    poly: baseR[\poly] ? 1,
                     struct: if(isChaos, {
                         self[\rand].value(self, 0.0, 1.0)
                     }, {
@@ -2157,7 +2276,7 @@
                         ((baseR[\pos] ? 0.42) + self[\rand].value(self, -0.12, 0.12)).clip(0.12, 0.78)
                     }),
                     envDecay: (((baseR[\envDecay] ? if(isDrone, { 12.0 }, { 5.0 })) * if(isPrime, { 0.72 }, { 1.0 }))
-                        .clip(if(isPerc, { 0.07 }, { 0.3 }), if(isDrone, { 18.0 }, { 10.0 }))) * sustainScale,
+                        .clip(if(isPerc, { 0.07 }, { 0.3 }), if(isDrone, { 8.0 }, { 10.0 }))) * sustainScale,
                     envRelease: (((baseR[\envRelease] ? if(isDrone, { 2.5 }, { 0.8 })) * if(isPrime, { 0.78 }, { 1.0 }))
                         .clip(0.05, if(isDrone, { 4.0 }, { 2.2 }))) * sustainScale
                 );
@@ -2166,7 +2285,8 @@
                     \pitch, (pitch + if(isPrime and: { pitch < 40 }, { 12 }, { 0 })).clip(0, 127),
                     \struct, r[\struct], \bright, r[\bright], \damp, r[\damp], \pos, r[\pos],
                     \model, r[\model], \poly, r[\poly],
-                    \envDecay, r[\envDecay] * decayScale, \envRelease, r[\envRelease] * if(isDrone, { 1.4 }, { 1.0 }),
+                    \envDecay, (r[\envDecay] * decayScale).clip(if(isPerc, { 0.07 }, { 0.3 }), if(isDrone, { 12.0 }, { if(isPerc, { 1.2 }, { if(isChaos, { 2.0 }, { 6.0 }) }) })),
+                    \envRelease, (r[\envRelease] * if(isDrone, { 1.4 }, { 1.0 })).clip(0.04, if(isDrone, { 3.5 }, { 2.2 })),
                     \amp, lane[\amp] * accent * (if(isPerc, { self[\rand].value(self, 0.85, 1.35) }, { if(isChaos, { self[\rand].value(self, 0.25, 1.55) }, { self[\rand].value(self, 0.70, 1.25) }) })),
                     \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.65 }), if(isChaos, { 0.95 }, { 0.65 })) + panBias).clip(-1, 1),
                     \strike, if(isPrime, { if(isDrone, { 1.3 }, { 1.55 }) }, { if(isPerc, { 1.18 }, { if(isDrone, { 1.05 }, { 1.12 }) }) }),
