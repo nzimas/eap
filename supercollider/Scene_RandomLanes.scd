@@ -2806,14 +2806,21 @@
             Routine({
                 while({ self[\gridFxQueue].size > 0 }, {
                     var cmd = self[\gridFxQueue].removeAt(0);
-                    var result, active;
-                    self[\setGridFxActive].value(self, false);
-                    0.22.wait;
+                    var result, active, wasActive;
+                    wasActive = (self[\gridFxActive] ? false).asBoolean;
+                    // The airwindows host accepts chain edits live over UDP,
+                    // so a per-FX toggle does not disturb the JACK chain or
+                    // the SC-side routing. No pre/post mute is needed.
                     result = cmd.unixCmdGetStdOut.stripWhiteSpace;
                     active = result.contains("active=1") or: { result.contains("active=2") or: { result.contains("active=3") } };
                     if(result.notEmpty, { ("EAP " ++ result).postln; });
-                    0.12.wait;
-                    self[\setGridFxActive].value(self, active);
+                    // Re-route lanes only on the empty<->non-empty transition:
+                    // - empty -> first FX: switch grid-selected scenes from dry to grid
+                    // - last FX -> empty: switch them back to dry
+                    // Toggles between two non-empty chain states are pure UDP.
+                    if(active != wasActive, {
+                        self[\setGridFxActive].value(self, active);
+                    });
                 });
                 self[\gridFxProcessing] = false;
             }).play(SystemClock);
@@ -3356,7 +3363,11 @@
         self[\masterSynth] = Synth.tail(self[\masterGroup], \eapSceneMaster, [
             \in, self[\masterBus].index, \reverbIn, self[\reverbBus].index, \out, 0
         ]);
-        { "/usr/local/bin/eap-airwindows-grid-fx --clear".unixCmd; }.defer(0.05);
+        // Clear any stale state from a prior session, then pre-warm the
+        // airwindows host. The host stays alive in bypass mode until the user
+        // engages a grid FX, so the first toggle hits the fast UDP path
+        // instead of paying the ~3 s host-spawn + JACK-wire cost.
+        { "/usr/local/bin/eap-airwindows-grid-fx --clear && /usr/local/bin/eap-airwindows-grid-fx --prewarm".unixCmd; }.defer(0.05);
         self[\applyReverb].value(self);
         self[\applyMaster].value(self);
         self[\slots] = Array.fill(self[\maxScenes], { nil });

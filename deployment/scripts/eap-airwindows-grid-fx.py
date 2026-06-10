@@ -194,6 +194,7 @@ def load_state() -> dict:
     data["host_pid"] = int(data.get("host_pid", 0) or 0)
     data["locked"] = normalized_seed_map(data.get("locked", {}))
     data["active_seeds"] = normalized_seed_map(data.get("active_seeds", {}))
+    data["ports_connected"] = bool(data.get("ports_connected", False))
     return data
 
 
@@ -215,6 +216,7 @@ def save_host_state(
     host_pid: int,
     locked: dict[str, int] | None = None,
     active_seeds: dict[str, int] | None = None,
+    ports_connected: bool | None = None,
 ) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     previous = load_state()
@@ -224,6 +226,7 @@ def save_host_state(
         "host_pid": host_pid,
         "locked": locked if locked is not None else previous.get("locked", {}),
         "active_seeds": active_seeds if active_seeds is not None else previous.get("active_seeds", {}),
+        "ports_connected": bool(ports_connected) if ports_connected is not None else bool(previous.get("ports_connected", False)),
         "updated_at": time.time(),
     }, indent=2))
 
@@ -417,21 +420,38 @@ def set_fx(index: int, enabled: bool) -> str:
             removed = active.pop(0)
             active_seeds.pop(str(removed), None)
         if not active:
+            # Chain goes empty: keep the host alive in bypass mode so the next
+            # FX activation skips the ~3 s host-spawn + JACK-wire delay. The
+            # host's audio callback passes audio through unchanged when its
+            # internal chain is empty, so this is glitch-free.
+            host_pid = int(state.get("host_pid", 0) or 0)
             if state["pids"]:
                 kill_old(state["pids"])
-            host_pid = int(state.get("host_pid", 0) or 0)
             if pid_alive(host_pid):
                 send_host("CLEAR")
-                time.sleep(0.1)
+                save_host_state([], host_pid, locked, {}, ports_connected=True)
+                return "active=0 idle"
             kill_hosts()
             disconnect_insert_ports()
-            save_host_state([], 0, locked, {})
+            save_host_state([], 0, locked, {}, ports_connected=False)
             return "active=0 stopped"
+        # Fast path: host is already alive and we have already wired the
+        # JACK ports on a previous call. The host accepts chain changes
+        # via UDP at runtime, so a per-FX toggle is just one datagram.
+        host_pid = int(state.get("host_pid", 0) or 0)
+        ports_connected = bool(state.get("ports_connected", False))
+        if pid_alive(host_pid) and ports_connected:
+            send_host(chain_message(active, locked, active_seeds))
+            save_host_state(active, host_pid, locked, active_seeds, ports_connected=True)
+            names = [FX_NAMES[i - 1] for i in active]
+            return "active={} host={} {}".format(len(active), host_pid, " ".join(names)).strip()
+        # Slow path: first toggle in a session (or after a host crash). Spawn
+        # the host and wire JACK; subsequent toggles take the fast path.
         if state["pids"]:
             kill_old(state["pids"])
         host_pid = start_host_if_needed(state)
         send_host(chain_message(active, locked, active_seeds))
-        save_host_state(active, host_pid, locked, active_seeds)
+        save_host_state(active, host_pid, locked, active_seeds, ports_connected=True)
         names = [FX_NAMES[i - 1] for i in active]
         return "active={} host={} {}".format(len(active), host_pid, " ".join(names)).strip()
 
@@ -466,8 +486,28 @@ def clear() -> str:
             time.sleep(0.1)
         kill_hosts()
         disconnect_insert_ports()
-        save_host_state([], 0, state.get("locked", {}), {})
+        save_host_state([], 0, state.get("locked", {}), {}, ports_connected=False)
         return "active=0 cleared"
+
+
+def prewarm() -> str:
+    """Ensure the airwindows host is alive and JACK ports are wired so a
+    later --set call lands on the fast path. Safe to call repeatedly."""
+    with locked_state():
+        state = load_state()
+        host_pid = int(state.get("host_pid", 0) or 0)
+        ports_connected = bool(state.get("ports_connected", False))
+        if pid_alive(host_pid) and ports_connected:
+            return f"prewarm=ready host={host_pid}"
+        host_pid = start_host_if_needed(state)
+        save_host_state(
+            state.get("active", []),
+            host_pid,
+            state.get("locked", {}),
+            state.get("active_seeds", {}),
+            ports_connected=True,
+        )
+        return f"prewarm=ok host={host_pid}"
 
 
 def stop_host() -> str:
@@ -485,7 +525,7 @@ def stop_host() -> str:
                 pass
         kill_hosts()
         disconnect_insert_ports()
-        save_host_state([], 0, state.get("locked", {}), {})
+        save_host_state([], 0, state.get("locked", {}), {}, ports_connected=False)
         return "active=0 stopped"
 
 
@@ -495,6 +535,7 @@ def main() -> int:
     parser.add_argument("--lock", nargs=2, metavar=("INDEX", "ENABLED"))
     parser.add_argument("--clear", action="store_true")
     parser.add_argument("--stop", action="store_true")
+    parser.add_argument("--prewarm", action="store_true")
     parser.add_argument("--status", action="store_true")
     args = parser.parse_args()
     if args.clear:
@@ -502,6 +543,9 @@ def main() -> int:
         return 0
     if args.stop:
         print(stop_host())
+        return 0
+    if args.prewarm:
+        print(prewarm())
         return 0
     if args.status:
         state = load_state()
