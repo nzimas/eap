@@ -552,8 +552,9 @@
         SynthDef(\eapLaneRingsNote, { |out = 0, pitch = 60, struct = 0.4,
             bright = 0.5, damp = 0.7, pos = 0.4, model = 0, poly = 2,
             envDecay = 8.0, envRelease = 1.2, amp = 0.12, pan = 0,
-            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0|
-            var trig, exciter, sig, env, lfo, drift, st, br, da, po;
+            modDepth = 0, modRate = 0.2, modShape = 0, modRand = 0,
+            strike = 1.0, exciterDecay = 0.09|
+            var trig, exciter, sig, env, lfo, drift, st, br, da, po, burst;
             trig = Trig1.kr(1, 0.01);
             lfo = Select.kr(modShape.clip(0, 3), [
                 SinOsc.kr(modRate), LFTri.kr(modRate), LFSaw.kr(modRate), LFNoise2.kr(modRate)
@@ -563,10 +564,12 @@
             br = (bright + (lfo * modDepth * 0.28) + (drift * modRand * 0.22)).clip(0, 1);
             da = (damp + (lfo * modDepth * 0.20) + (drift * modRand * 0.18)).clip(0, 1);
             po = (pos + (lfo * modDepth * 0.30) + (drift * modRand * 0.22)).clip(0, 1);
-            exciter = PinkNoise.ar(0.03) * Decay2.kr(trig, 0.004, 0.09);
+            burst = Decay2.kr(trig, 0.0015, exciterDecay.clip(0.03, 0.18));
+            exciter = HPF.ar((PinkNoise.ar(0.03) + WhiteNoise.ar(0.02)) * burst * strike.clip(0.6, 1.8), 110);
             sig = MiRings.ar(exciter, trig, pitch, st, br, da, po, model, poly, 1, 0);
             env = EnvGen.kr(Env.linen(0.002, envDecay.max(0.04), envRelease.max(0.02)), doneAction: 2);
-            sig = Balance2.ar(sig[0], sig[1], pan, amp) * env;
+            sig = HPF.ar(LeakDC.ar(sig), 28);
+            sig = Balance2.ar(sig[0], sig[1], pan, amp * strike.linlin(0.6, 1.8, 0.9, 1.2)) * env;
             Out.ar(out, LeakDC.ar(sig));
         }).add;
 
@@ -1984,27 +1987,50 @@
 
     ~primeLane = { |self, lane|
         var modifier = lane[\soundModifier] ? \harmonic;
-        var events = switch(modifier,
-            \drone, { [
-                (sourceCount: 1, accent: 1.45, scaleStep: 0, panBias: 0.0, decayScale: 1.6, sustain: 1)
-            ] },
-            \percussive, { [
-                (sourceCount: 1, accent: 1.65, scaleStep: 0, panBias: 0.0, decayScale: 1.05),
-                (sourceCount: 1, accent: 1.20, scaleStep: 2, panBias: -0.16, decayScale: 0.85),
-                (sourceCount: 1, accent: 1.10, scaleStep: -1, panBias: 0.18, decayScale: 0.95)
-            ] },
-            \chaos, { [
-                (sourceCount: 1, accent: 1.35, scaleStep: 0, panBias: 0.0, decayScale: 0.7),
-                (sourceCount: 1, accent: 1.10, scaleStep: 3, panBias: 0.22, decayScale: 0.55)
-            ] },
-            { [
-                (sourceCount: 1, accent: 1.35, scaleStep: 0, panBias: 0.0, decayScale: 1.15),
-                (sourceCount: 1, accent: 1.05, scaleStep: 1, panBias: 0.12, decayScale: 0.95)
-            ] }
-        );
+        var hasRings = (lane[\materials] ? []).includes(\rings);
+        var events = if(hasRings, {
+            switch(modifier,
+                \drone, { [
+                    (sourceCount: 1, accent: 1.7, scaleStep: 0, panBias: 0.0, decayScale: 1.3, sustain: 1, prime: 1),
+                    (sourceCount: 1, accent: 1.25, scaleStep: 2, panBias: -0.08, decayScale: 0.9, prime: 1)
+                ] },
+                \percussive, { [
+                    (sourceCount: 1, accent: 1.8, scaleStep: 0, panBias: 0.0, decayScale: 0.95, prime: 1),
+                    (sourceCount: 1, accent: 1.35, scaleStep: 2, panBias: -0.12, decayScale: 0.75, prime: 1),
+                    (sourceCount: 1, accent: 1.2, scaleStep: -1, panBias: 0.14, decayScale: 0.8, prime: 1)
+                ] },
+                \chaos, { [
+                    (sourceCount: 1, accent: 1.55, scaleStep: 0, panBias: 0.0, decayScale: 0.65, prime: 1),
+                    (sourceCount: 1, accent: 1.2, scaleStep: 3, panBias: 0.18, decayScale: 0.5, prime: 1)
+                ] },
+                { [
+                    (sourceCount: 1, accent: 1.6, scaleStep: 0, panBias: 0.0, decayScale: 1.0, prime: 1),
+                    (sourceCount: 1, accent: 1.2, scaleStep: 2, panBias: 0.10, decayScale: 0.82, prime: 1)
+                ] }
+            );
+        }, {
+            switch(modifier,
+                \drone, { [
+                    (sourceCount: 1, accent: 1.45, scaleStep: 0, panBias: 0.0, decayScale: 1.6, sustain: 1)
+                ] },
+                \percussive, { [
+                    (sourceCount: 1, accent: 1.65, scaleStep: 0, panBias: 0.0, decayScale: 1.05),
+                    (sourceCount: 1, accent: 1.20, scaleStep: 2, panBias: -0.16, decayScale: 0.85),
+                    (sourceCount: 1, accent: 1.10, scaleStep: -1, panBias: 0.18, decayScale: 0.95)
+                ] },
+                \chaos, { [
+                    (sourceCount: 1, accent: 1.35, scaleStep: 0, panBias: 0.0, decayScale: 0.7),
+                    (sourceCount: 1, accent: 1.10, scaleStep: 3, panBias: 0.22, decayScale: 0.55)
+                ] },
+                { [
+                    (sourceCount: 1, accent: 1.35, scaleStep: 0, panBias: 0.0, decayScale: 1.15),
+                    (sourceCount: 1, accent: 1.05, scaleStep: 1, panBias: 0.12, decayScale: 0.95)
+                ] }
+            );
+        });
         Routine({
             events.do({ |event, i|
-                if(i > 0, { [0.16, 0.22, 0.28].wrapAt(i - 1).wait; });
+                if(i > 0, { if(hasRings, { [0.12, 0.18, 0.24].wrapAt(i - 1) }, { [0.16, 0.22, 0.28].wrapAt(i - 1) }).wait; });
                 if(lane.notNil and: { lane[\state] == \active }, {
                     self[\triggerLane].value(self, lane, event);
                 });
@@ -2066,6 +2092,7 @@
         var modShape = [0, 0, 1, 1, 2, 2, 3, 3][motionStage];
         var modRand = [0.0, 0.0, 0.03, 0.06, 0.10, 0.16, 0.24, 0.34][motionStage];
         var sustainEvent = ev[\sustain] ? true;
+        var isPrime = (ev[\prime] ? 0).asInteger == 1;
         var sustainScale = if(isDrone or: { sustainEvent }, { 1.0 }, { self[\sustainLoadScale].value(self) });
         if(isChaos, {
             modDepth = self[\rand].value(self, 0.12, 0.72);
@@ -2096,23 +2123,54 @@
                 ]);
             };
             if(source == \rings) {
-                var r = lane[\rings] ? (
+                var baseR = lane[\rings] ? (
+                    model: lane[\ringsModel] ? 0,
+                    poly: 2,
+                    struct: 0.45,
+                    bright: 0.58,
+                    damp: 0.62,
+                    pos: 0.42,
+                    envDecay: if(isDrone, { 12.0 }, { 5.0 }),
+                    envRelease: if(isDrone, { 2.5 }, { 0.8 })
+                );
+                var r = (
                     model: if(isChaos, { rrand(0, 3) }, { lane[\ringsModel] }),
-                    poly: if(isChaos, { [1, 2, 4, 8].choose }, { [1, 2, 4].choose }),
-                    struct: if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.12, 0.88) }),
-                    bright: if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.18, 0.95) }),
-                    damp: if(isChaos, { self[\rand].value(self, 0.02, 0.99) }, { self[\rand].value(self, 0.25, 0.96) }),
-                    pos: if(isChaos, { self[\rand].value(self, 0.0, 1.0) }, { self[\rand].value(self, 0.10, 0.88) }),
-                    envDecay: if(isDrone, { 12.0 }, { if(isChaos, { self[\exprand].value(self, 0.5, 14.0) }, { 5.0 }) }) * sustainScale,
-                    envRelease: if(isDrone, { 2.5 }, { if(isChaos, { self[\exprand].value(self, 0.08, 3.5) }, { 0.8 }) }) * sustainScale
+                    poly: if(isChaos, { [1, 2, 4, 8].choose }, { baseR[\poly] ? [1, 2, 4].choose }),
+                    struct: if(isChaos, {
+                        self[\rand].value(self, 0.0, 1.0)
+                    }, {
+                        ((baseR[\struct] ? 0.45) + self[\rand].value(self, -0.14, 0.14)).clip(0.16, 0.84)
+                    }),
+                    bright: if(isChaos, {
+                        self[\rand].value(self, 0.0, 1.0)
+                    }, {
+                        ((baseR[\bright] ? 0.58) + self[\rand].value(self, -0.10, 0.16)).clip(if(isPrime, { 0.42 }, { 0.28 }), 0.96)
+                    }),
+                    damp: if(isChaos, {
+                        self[\rand].value(self, 0.02, 0.99)
+                    }, {
+                        ((baseR[\damp] ? 0.62) + self[\rand].value(self, -0.16, 0.10)).clip(0.28, if(isPrime, { 0.84 }, { 0.92 }))
+                    }),
+                    pos: if(isChaos, {
+                        self[\rand].value(self, 0.0, 1.0)
+                    }, {
+                        ((baseR[\pos] ? 0.42) + self[\rand].value(self, -0.12, 0.12)).clip(0.12, 0.78)
+                    }),
+                    envDecay: (((baseR[\envDecay] ? if(isDrone, { 12.0 }, { 5.0 })) * if(isPrime, { 0.72 }, { 1.0 }))
+                        .clip(if(isPerc, { 0.07 }, { 0.3 }), if(isDrone, { 18.0 }, { 10.0 }))) * sustainScale,
+                    envRelease: (((baseR[\envRelease] ? if(isDrone, { 2.5 }, { 0.8 })) * if(isPrime, { 0.78 }, { 1.0 }))
+                        .clip(0.05, if(isDrone, { 4.0 }, { 2.2 }))) * sustainScale
                 );
                 Synth.head(lane[\group], \eapLaneRingsNote, [
-                    \out, lane[\sourceBus].index, \pitch, pitch,
+                    \out, lane[\sourceBus].index,
+                    \pitch, (pitch + if(isPrime and: { pitch < 40 }, { 12 }, { 0 })).clip(0, 127),
                     \struct, r[\struct], \bright, r[\bright], \damp, r[\damp], \pos, r[\pos],
                     \model, r[\model], \poly, r[\poly],
                     \envDecay, r[\envDecay] * decayScale, \envRelease, r[\envRelease] * if(isDrone, { 1.4 }, { 1.0 }),
                     \amp, lane[\amp] * accent * (if(isPerc, { self[\rand].value(self, 0.85, 1.35) }, { if(isChaos, { self[\rand].value(self, 0.25, 1.55) }, { self[\rand].value(self, 0.70, 1.25) }) })),
                     \pan, (self[\rand].value(self, if(isChaos, { -0.95 }, { -0.65 }), if(isChaos, { 0.95 }, { 0.65 })) + panBias).clip(-1, 1),
+                    \strike, if(isPrime, { if(isDrone, { 1.3 }, { 1.55 }) }, { if(isPerc, { 1.18 }, { if(isDrone, { 1.05 }, { 1.12 }) }) }),
+                    \exciterDecay, if(isPrime, { if(isPerc, { 0.06 }, { 0.10 }) }, { if(isPerc, { 0.045 }, { 0.08 }) }),
                     \modDepth, modDepth, \modRate, modRate, \modShape, modShape, \modRand, modRand
                 ]);
             };
@@ -2971,7 +3029,6 @@
                 var laneModifier = modifier ? self[\soundModifierSymbols].choose;
                 var adaptive = self[\adaptiveContextForSlot].value(self, index + 1, laneModifier);
                 var lane = self[\randomLane].value(self, index + 1, n, laneModifier, adaptive);
-                lane[\state] = \muted;
                 self[\startLane].value(self, lane);
                 self[\lanes].add(lane);
                 self[\slots][index] = lane;
