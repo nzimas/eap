@@ -105,6 +105,7 @@ HOST_PREFIX = r'''
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 '''
@@ -257,6 +258,14 @@ static void control_loop(uint16_t port) {
     addr.sin_port = htons(port);
     int yes = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    // Give the recvfrom a 200 ms timeout so the thread polls g_running and
+    // honors SIGTERM promptly. Without this the thread blocks forever in
+    // recvfrom and systemd has to SIGKILL after a 90 s grace, leaving the
+    // service in a "stop-sigterm timed out" state on every restart.
+    timeval rcv_to{};
+    rcv_to.tv_sec = 0;
+    rcv_to.tv_usec = 200000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
     if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
         close(fd);
         return;
@@ -266,7 +275,7 @@ static void control_loop(uint16_t port) {
         sockaddr_in from{};
         socklen_t from_len = sizeof(from);
         ssize_t n = recvfrom(fd, buffer, sizeof(buffer) - 1, 0, reinterpret_cast<sockaddr*>(&from), &from_len);
-        if (n <= 0) continue;
+        if (n <= 0) continue;  // timeout or transient error: re-check g_running
         std::string msg(buffer, static_cast<size_t>(n));
         if (msg.find("QUIT") == 0) {
             g_running.store(false);

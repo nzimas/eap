@@ -1500,7 +1500,10 @@ def build_lane_pattern(p: Any, cfg: LaneCfg, composition: Any) -> None:
 
     cap = _event_cap(effective, profile)
     if cap is not None and len(p._pattern.osc_events) > cap:
-        LOG.warning(
+        # Routine self-correction, not an alert condition. Was WARNING; that
+        # firing several times per second on every active drone lane
+        # drowned out real errors when investigating the journal.
+        LOG.debug(
             "lane %s profile %s emitted %s events; thinning to %s",
             slot,
             profile,
@@ -1513,7 +1516,7 @@ def build_lane_pattern(p: Any, cfg: LaneCfg, composition: Any) -> None:
     if cap is not None:
         floor = min(floor, cap)
     if len(p._pattern.osc_events) < floor:
-        LOG.warning(
+        LOG.debug(
             "lane %s profile %s emitted %s events; filling to %s",
             slot,
             profile,

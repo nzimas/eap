@@ -11,7 +11,12 @@ Group=audio
 Environment=JACK_NO_AUDIO_RESERVATION=1
 LimitRTPRIO=95
 LimitMEMLOCK=infinity
-ExecStart=/usr/bin/jackd -R -P 95 -d alsa -d hw:sndrpiproto -r 48000 -n 2 -p 4096 -S -s
+# -t 2000: tolerate up to 2 s of late callback from any client before
+# zombifying it. The default 500 ms timeout means a single occasional
+# xrun used to kick scsynth off the JACK graph, which the watchdog
+# detected as "scsynth gone" and restarted the whole service (the
+# hourly-ish "EAP stack resets" symptom).
+ExecStart=/usr/bin/jackd -R -P 95 -t 2000 -d alsa -d hw:sndrpiproto -r 48000 -n 2 -p 4096 -S -s
 Restart=on-failure
 RestartSec=2
 
