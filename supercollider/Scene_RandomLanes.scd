@@ -571,8 +571,14 @@
             exciter = HPF.ar((PinkNoise.ar(0.6) + WhiteNoise.ar(0.4)) * burst * strike.clip(0.6, 1.8), 90);
             sig = MiRings.ar(exciter, trig, pitch, st, br, da, po, model, poly, 1, 0);
             env = EnvGen.ar(Env.linen(0.002, envDecay.max(0.04), envRelease.max(0.02)), doneAction: 2);
-            sig = HPF.ar(LeakDC.ar(sig), 28);
-            sig = Balance2.ar(sig[0], sig[1], pan, amp * strike.linlin(0.6, 1.8, 0.9, 1.2)) * env;
+            // MiRings returns [odd, even] outputs. In monophonic mode those are
+            // complementary partials of the same struck resonator (both lit).
+            // In polyphonic mode (poly>1) they are odd-numbered vs even-numbered
+            // strings, and a single strike excites only one string -> only one
+            // of the two outputs carries signal. Sum to mono, then Pan2 by the
+            // lane pan so audio always lands in both channels regardless of poly.
+            sig = HPF.ar(LeakDC.ar(sig.sum), 28);
+            sig = Pan2.ar(sig, pan, amp * strike.linlin(0.6, 1.8, 0.9, 1.2)) * env;
             Out.ar(out, LeakDC.ar(sig));
         }).add;
 
