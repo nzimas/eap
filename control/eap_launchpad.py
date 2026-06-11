@@ -1027,11 +1027,6 @@ def gran_value_row_for_cc(cc_value: int) -> int:
     return int(round((cc_value / 127) * (GRAN_SLIDER_STEPS - 1))) + 2
 
 
-def gran_lit_count_for_value(cc_value: int) -> int:
-    # Unipolar fill: how many pads to light from the bottom up for a given cc.
-    return int(round((cc_value / 127) * GRAN_SLIDER_STEPS))
-
-
 def paint_granulator_page(
     granulator_params: list[int],
     pads: dict[int, Pad],
@@ -1074,11 +1069,13 @@ def paint_granulator_page(
                 else:
                     send_led(note, RGB_GRAN_SLIDER_BG)
             else:
-                # Unipolar: fill from the bottom up. Filter cols amber, dry/wet teal.
-                lit = gran_lit_count_for_value(cc_value)
+                # Unipolar, matching the reverb/master pages: bottom row = max,
+                # the bar fills from the top down to the value row. Filter cols
+                # amber, dry/wet teal.
+                current_row = 2 + round((cc_value / 127) * (GRAN_SLIDER_STEPS - 1))
                 lit_colour = RGB_MIX_SLIDER_LIT if col == 7 else RGB_FILT_SLIDER_LIT
                 bg_colour = RGB_MIX_SLIDER_BG if col == 7 else RGB_FILT_SLIDER_BG
-                if row > (8 - lit):
+                if row <= current_row:
                     send_led(note, lit_colour)
                 else:
                     send_led(note, bg_colour)
