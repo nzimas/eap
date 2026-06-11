@@ -148,7 +148,7 @@ s.waitForBoot({
     }, '/eap/granulator/scene');
 
     OSCdef(\eapGranulatorParam, { |msg|
-        var param = (msg[1] ? 1).asInteger.clip(1, 6);
+        var param = (msg[1] ? 1).asInteger.clip(1, 7);
         var value = ((msg[2] ? 0).asInteger / 127).clip(0, 1);
         ~eapScenes[\setGranulatorParam].value(~eapScenes, param, value);
     }, '/eap/granulator/param');

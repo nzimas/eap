@@ -33,7 +33,8 @@
         grainSize:  0.30,    // 0..1 -> 0.005..1.0 s (exprange)
         pitch:      0.5,     // 0..1 -> -24..+24 semitones, snaps to scale when set
         cutoff:     0.75,    // 0..1 -> 80..16000 Hz (exprange)
-        resonance:  0.10     // 0..1 -> rq 1.0..0.05 (higher slider -> more resonant)
+        resonance:  0.10,    // 0..1 -> rq 1.0..0.05 (higher slider -> more resonant)
+        dryWet:     1.0      // 0..1 -> 0% .. 100% wet at the granulator output
     );
     ~externalInputSynth = nil;
     ~externalInputHoldUntil = 0;
@@ -888,9 +889,10 @@
         SynthDef(\eapGranulator, { |in = 0, out = 0, buf = 0, amp = 1.0,
             densityNorm = 0.35, jitterNorm = 0.0, grainNorm = 0.30,
             pitchSemis = 0.0, cutoffNorm = 0.75, resoNorm = 0.10,
+            dryWet = 1.0,
             freeze = 0, fadeTime = 0.08|
             var src, mono, writeHead, frames, density, jitter, grainDur, rate;
-            var posCenter, posJit, posRead, grain, cutoff, rq, sig;
+            var posCenter, posJit, posRead, grain, cutoff, rq, sig, wet, mix;
             src = In.ar(in, 2);
             mono = src.sum * 0.5;
             frames = BufFrames.kr(buf);
@@ -908,13 +910,18 @@
                 2, LFNoise1.kr(density * 0.5) * jitter, -1, 64);
             cutoff = Lag.kr(cutoffNorm, fadeTime).clip(0,1).linexp(0,1, 80, 16000);
             rq     = Lag.kr(resoNorm,   fadeTime).clip(0,1).linlin(0,1, 1.0, 0.05);
-            sig = RLPF.ar(grain, cutoff, rq);
-            sig = LeakDC.ar(sig);
+            wet = RLPF.ar(grain, cutoff, rq);
+            wet = LeakDC.ar(wet);
             // Grain output is inherently sparse compared to the continuous
             // input. A 3x boost brings it perceptually close to the dry path
             // at typical density; the limiter catches the peaks. Resonance
             // contributes a second gain trim because high Q narrows energy.
-            sig = sig * 3.0 * resoNorm.linlin(0,1, 1.0, 1.6);
+            wet = wet * 3.0 * resoNorm.linlin(0,1, 1.0, 1.6);
+            // Dry/wet between the raw stereo input and the processed grains.
+            // At dryWet = 0 the granulator acts as a pass-through, so the
+            // page can be left engaged on quiet scenes without colour change.
+            mix = Lag.kr(dryWet, fadeTime).clip(0, 1);
+            sig = (src * (1 - mix)) + (wet * mix);
             Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime), 0.95, 0.005));
         }).add;
 
@@ -2970,6 +2977,7 @@
                 \pitchSemis, pitchSemis,
                 \cutoffNorm, p[\cutoff],
                 \resoNorm, p[\resonance],
+                \dryWet, p[\dryWet] ? 1.0,
                 \freeze, if((self[\granulatorFreeze] ? false).asBoolean, { 1 }, { 0 })
             );
         });
@@ -2999,9 +3007,9 @@
     };
 
     ~setGranulatorParam = { |self, paramCode, value|
-        // paramCode 1..6 = density, jitter, grainSize, pitch, cutoff, resonance.
+        // paramCode 1..7 = density, jitter, grainSize, pitch, cutoff, resonance, dryWet.
         // value is the same 0..1 normalized form used in ~granulatorParams.
-        var name = #[\density, \jitter, \grainSize, \pitch, \cutoff, \resonance].wrapAt(paramCode.asInteger - 1);
+        var name = #[\density, \jitter, \grainSize, \pitch, \cutoff, \resonance, \dryWet].wrapAt(paramCode.asInteger - 1);
         var v = value.asFloat.clip(0, 1);
         if(name.notNil, {
             self[\granulatorParams][name] = v;
