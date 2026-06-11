@@ -398,6 +398,24 @@ def ensure_grid_fx_scene_selection(pads: dict[int, Pad], selected_scenes: set[in
         send_grid_fx_scene_osc(slot, True)
 
 
+def ensure_granulator_scene_selection(pads: dict[int, Pad], selected_scenes: set[int]) -> None:
+    # Mirror of ensure_grid_fx_scene_selection: on page entry, drop selections
+    # whose slot is no longer active, and if nothing is left, auto-route every
+    # currently-active scene through the granulator so flipping CC 28 has
+    # audible effect without a separate row-1 step.
+    active_slots = {
+        slot_for_note(note)
+        for note, pad in pads.items()
+        if pad.state == STATE_ACTIVE
+    }
+    selected_scenes.intersection_update(active_slots)
+    if selected_scenes:
+        return
+    selected_scenes.update(active_slots)
+    for slot in sorted(selected_scenes):
+        send_granulator_scene_osc(slot, True)
+
+
 def modifier_index_for_cc(cc: int) -> int:
     try:
         return MODIFIER_CCS.index(cc) + 1
@@ -1508,9 +1526,11 @@ def main() -> int:
                             mode = "granulator"
                             performance_slot = None
                             performance_scene_note = None
-                            # Carry forward whichever scenes were previously
-                            # selected; entering the page doesn't change them
-                            # or the active flag (active is on CC 28 now).
+                            # Auto-route every currently-active scene through
+                            # the granulator unless the user has already made a
+                            # specific row-1 selection; CC 28 alone is then
+                            # enough to make the effect audible.
+                            ensure_granulator_scene_selection(pads, granulator_scenes)
                             paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
                 elif controller == GRAN_ACTIVE_CC:
                     # CC 28 is the master on/off, but it only reacts while the
@@ -1587,7 +1607,6 @@ def main() -> int:
                 continue
             if mode == "granulator":
                 if kind == "on":
-                    print(f"gran: note={note} active_was={granulator_active} freeze_was={granulator_freeze}", file=sys.stderr, flush=True)
                     # CC 28 (active) and CC 38 (freeze) are matrix pads on the
                     # Launchpad Mini Mk3, so they arrive here as Note On rather
                     # than as MIDI CCs. Handle the toggles inline since we
@@ -1595,12 +1614,10 @@ def main() -> int:
                     if note == GRAN_ACTIVE_CC:
                         granulator_active = not granulator_active
                         send_granulator_active_osc(granulator_active)
-                        print(f"gran: sent active={granulator_active}", file=sys.stderr, flush=True)
                         paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
                     elif note == FREEZE_CC:
                         granulator_freeze = not granulator_freeze
                         send_granulator_freeze_osc(granulator_freeze)
-                        print(f"gran: sent freeze={granulator_freeze}", file=sys.stderr, flush=True)
                         paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
                     else:
                         handle_granulator_note(note, granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
