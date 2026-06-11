@@ -90,6 +90,30 @@ RGB_GRID_FX_SCENE_SELECTED = (0, 126, 42)
 RGB_GRID_FX_LOCKED = (24, 0, 0)
 RGB_GRID_FX_LOCKED_ACTIVE = (126, 0, 0)
 RGB_GRID_FX_LOCK_FLASH = (126, 0, 0)
+RGB_GRAN_IDLE = (6, 4, 14)
+RGB_GRAN_PAGE = (40, 28, 126)
+RGB_GRAN_DIM = (6, 4, 14)
+RGB_GRAN_SCENE_ACTIVE = (0, 62, 14)
+RGB_GRAN_SCENE_SELECTED = (0, 126, 42)
+# One distinctive trail colour per slider column so the page stays legible.
+RGB_GRAN_SLIDER_BG = [
+    (10,  4,  4),    # col 1 density   - red trail
+    (12,  8,  2),    # col 2 jitter    - amber
+    ( 4, 10,  4),    # col 3 grain     - green
+    ( 4,  8, 12),    # col 4 pitch     - cyan
+    ( 4,  4, 12),    # col 5 cutoff    - blue
+    (12,  4, 10),    # col 6 resonance - magenta
+]
+RGB_GRAN_SLIDER_LIT = [
+    (126,  20,  20),
+    (126,  90,  10),
+    ( 28, 126,  28),
+    ( 28, 100, 126),
+    ( 40,  40, 126),
+    (126,  40, 100),
+]
+RGB_FREEZE_IDLE = (4, 14, 18)
+RGB_FREEZE_ACTIVE = (40, 126, 126)
 RGB_SETTINGS_DIM = (8, 8, 10)
 RGB_SETTINGS_VALUE = (44, 44, 56)
 RGB_SETTINGS_SELECTED = (126, 126, 104)
@@ -106,6 +130,17 @@ AIRWINDOWS_FX = [
     "Deckwrecka", "DeNoise", "Texturize", "VoiceOfTheStarship", "ElectroHat", "Silhouette",
 ]
 MAX_GRID_FX_ACTIVE = 3
+
+GRANULATOR_CC = 79
+FREEZE_CC = 28
+# Six vertical sliders, one per granulator parameter. Each lives in one column
+# of the matrix; rows 2..8 form a 7-step bar with row 8 = 0 and row 2 = max.
+GRAN_PARAM_NAMES = ["density", "jitter", "grain_size", "pitch", "cutoff", "resonance"]
+GRAN_SLIDER_COLS = (1, 2, 3, 4, 5, 6)   # cols 7 and 8 left blank
+GRAN_SLIDER_ROWS = (2, 3, 4, 5, 6, 7, 8)
+GRAN_SLIDER_STEPS = len(GRAN_SLIDER_ROWS)        # 7
+GRAN_SCENE_ROW = 1                                # top row reserved for scene picks
+GRAN_DEFAULTS_CC = [45, 0, 38, 64, 95, 13]        # density, jitter, grain, pitch, cutoff, reso
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -300,6 +335,34 @@ def send_grid_fx_scene_osc(slot: int, enabled: bool) -> None:
 def send_grid_fx_lock_osc(index: int, locked: bool) -> None:
     packet = osc_string("/eap/gridfx/lock") + osc_string(",ii")
     packet += struct.pack(">ii", int(index), 1 if locked else 0)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_granulator_active_osc(enabled: bool) -> None:
+    packet = osc_string("/eap/granulator/active") + osc_string(",i")
+    packet += struct.pack(">i", 1 if enabled else 0)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_granulator_scene_osc(slot: int, enabled: bool) -> None:
+    packet = osc_string("/eap/granulator/scene") + osc_string(",ii")
+    packet += struct.pack(">ii", int(slot), 1 if enabled else 0)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_granulator_param_osc(param: int, cc_value: int) -> None:
+    packet = osc_string("/eap/granulator/param") + osc_string(",ii")
+    packet += struct.pack(">ii", int(param), int(cc_value))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(packet, (OSC_HOST, OSC_PORT))
+
+
+def send_granulator_freeze_osc(enabled: bool) -> None:
+    packet = osc_string("/eap/granulator/freeze") + osc_string(",i")
+    packet += struct.pack(">i", 1 if enabled else 0)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(packet, (OSC_HOST, OSC_PORT))
 
@@ -651,6 +714,8 @@ def paint_scene_page(pads: dict[int, Pad], held_modifier_cc: int | None = None) 
     paint_modifier_leds(held_modifier_cc)
     send_led(SETTINGS_CC, RGB_SETTINGS_DIM)
     send_led(GRID_FX_CC, RGB_GRID_FX_IDLE)
+    send_led(GRANULATOR_CC, RGB_GRAN_IDLE)
+    send_led(FREEZE_CC, RGB_FREEZE_IDLE)
 
 
 def col_for_value(value: int) -> int:
@@ -911,6 +976,105 @@ def handle_grid_fx_release(
         paint_grid_fx_page(active_fx, pads, selected_scenes, locked_fx)
         return True
     return handle_grid_fx_note(note, active_fx, pads, selected_scenes, locked_fx)
+
+
+def gran_slider_col_for_note(note: int) -> int | None:
+    position = matrix_position(note)
+    if position is None:
+        return None
+    row, col = position
+    if row not in GRAN_SLIDER_ROWS:
+        return None
+    if col not in GRAN_SLIDER_COLS:
+        return None
+    return col
+
+
+def gran_value_cc_for_row(row: int) -> int:
+    # Row 8 -> 0, row 2 -> 127. Six divisions across the seven rows.
+    step = max(0, 8 - row)
+    return int(round((step / (GRAN_SLIDER_STEPS - 1)) * 127))
+
+
+def gran_lit_count_for_value(cc_value: int) -> int:
+    # How many vertical pads to light from the bottom upward for a given cc.
+    return int(round((cc_value / 127) * GRAN_SLIDER_STEPS))
+
+
+def paint_granulator_page(
+    granulator_params: list[int],
+    pads: dict[int, Pad],
+    granulator_scenes: set[int],
+    granulator_freeze: bool,
+) -> None:
+    for note in MATRIX_NOTES:
+        position = matrix_position(note)
+        if position is None:
+            continue
+        row, col = position
+        if row == GRAN_SCENE_ROW:
+            pad = pads.get(note)
+            if pad is not None and pad.state == STATE_ACTIVE:
+                slot = slot_for_note(note)
+                colour = (
+                    RGB_GRAN_SCENE_SELECTED
+                    if slot in granulator_scenes
+                    else RGB_GRAN_SCENE_ACTIVE
+                )
+            elif pad is not None and pad.state == STATE_MUTED:
+                colour = RGB_MUTED
+            else:
+                colour = RGB_GRAN_DIM
+            send_led(note, colour)
+            continue
+        if col in GRAN_SLIDER_COLS and row in GRAN_SLIDER_ROWS:
+            param_idx = col - 1
+            cc_value = granulator_params[param_idx]
+            lit = gran_lit_count_for_value(cc_value)
+            step = 8 - row  # row 8 -> 0, row 2 -> 6
+            if step < lit:
+                send_led(note, RGB_GRAN_SLIDER_LIT[param_idx])
+            else:
+                send_led(note, RGB_GRAN_SLIDER_BG[param_idx])
+            continue
+        send_led(note, RGB_GRAN_DIM)
+    send_led(GRANULATOR_CC, RGB_GRAN_PAGE)
+    send_led(FREEZE_CC, RGB_FREEZE_ACTIVE if granulator_freeze else RGB_FREEZE_IDLE)
+
+
+def handle_granulator_note(
+    note: int,
+    granulator_params: list[int],
+    pads: dict[int, Pad],
+    granulator_scenes: set[int],
+    granulator_freeze: bool,
+) -> bool:
+    position = matrix_position(note)
+    if position is None:
+        return False
+    row, col = position
+    if row == GRAN_SCENE_ROW:
+        pad = pads.get(note)
+        if pad is None or pad.state != STATE_ACTIVE:
+            return False
+        slot = slot_for_note(note)
+        if slot in granulator_scenes:
+            granulator_scenes.remove(slot)
+            send_granulator_scene_osc(slot, False)
+        else:
+            granulator_scenes.add(slot)
+            send_granulator_scene_osc(slot, True)
+        send_granulator_active_osc(len(granulator_scenes) > 0)
+        paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze)
+        return True
+    if col in GRAN_SLIDER_COLS and row in GRAN_SLIDER_ROWS:
+        param_idx = col - 1
+        cc_value = gran_value_cc_for_row(row)
+        granulator_params[param_idx] = cc_value
+        send_granulator_param_osc(param_idx + 1, cc_value)
+        paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze)
+        return True
+    return False
 
 
 def paint_reverb_page(values: list[int]) -> None:
@@ -1210,6 +1374,9 @@ def main() -> int:
     grid_fx_scenes: set[int] = set()
     grid_fx_locked: set[int] = set()
     grid_fx_pressed: dict[int, float] = {}
+    granulator_scenes: set[int] = set()
+    granulator_params: list[int] = list(GRAN_DEFAULTS_CC)
+    granulator_freeze: bool = False
     paint_scene_page(pads, held_modifier_cc)
     osc_sock = create_osc_socket()
     wait_for_sc_ready(osc_sock, pads)
@@ -1331,6 +1498,28 @@ def main() -> int:
                             sync_grid_fx_status(grid_fx_active, grid_fx_locked)
                             ensure_grid_fx_scene_selection(pads, grid_fx_scenes)
                             paint_grid_fx_page(grid_fx_active, pads, grid_fx_scenes, grid_fx_locked)
+                elif controller == GRANULATOR_CC:
+                    if value > 0:
+                        if mode == "granulator":
+                            mode = "scene"
+                            paint_scene_page(pads, held_modifier_cc)
+                        else:
+                            mode = "granulator"
+                            performance_slot = None
+                            performance_scene_note = None
+                            # Carry forward whichever scenes were previously
+                            # selected; entering the page doesn't change them
+                            # or the active flag (active follows scene count).
+                            paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze)
+                elif controller == FREEZE_CC:
+                    if value > 0:
+                        granulator_freeze = not granulator_freeze
+                        send_granulator_freeze_osc(granulator_freeze)
+                        # Reflect the new freeze state on the dedicated LED
+                        # immediately, and refresh the page if it's open.
+                        send_led(FREEZE_CC, RGB_FREEZE_ACTIVE if granulator_freeze else RGB_FREEZE_IDLE)
+                        if mode == "granulator":
+                            paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze)
                 continue
 
             note = data
@@ -1390,6 +1579,10 @@ def main() -> int:
                 else:
                     pressed_at = grid_fx_pressed.pop(note, None)
                     handle_grid_fx_release(note, pressed_at, grid_fx_active, pads, grid_fx_scenes, grid_fx_locked)
+                continue
+            if mode == "granulator":
+                if kind == "on":
+                    handle_granulator_note(note, granulator_params, pads, granulator_scenes, granulator_freeze)
                 continue
             if mode == "settings":
                 if kind == "on":

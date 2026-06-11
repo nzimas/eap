@@ -136,6 +136,28 @@ s.waitForBoot({
         ~eapScenes[\setGridFxScene].value(~eapScenes, slot, enabled);
     }, '/eap/gridfx/scene');
 
+    OSCdef(\eapGranulatorActive, { |msg|
+        var enabled = (msg[1] ? 0).asInteger.clip(0, 1);
+        ~eapScenes[\setGranulatorActive].value(~eapScenes, enabled);
+    }, '/eap/granulator/active');
+
+    OSCdef(\eapGranulatorScene, { |msg|
+        var slot = (msg[1] ? 1).asInteger.clip(1, ~eapScenes[\maxScenes]);
+        var enabled = (msg[2] ? 0).asInteger.clip(0, 1);
+        ~eapScenes[\setGranulatorScene].value(~eapScenes, slot, enabled);
+    }, '/eap/granulator/scene');
+
+    OSCdef(\eapGranulatorParam, { |msg|
+        var param = (msg[1] ? 1).asInteger.clip(1, 6);
+        var value = ((msg[2] ? 0).asInteger / 127).clip(0, 1);
+        ~eapScenes[\setGranulatorParam].value(~eapScenes, param, value);
+    }, '/eap/granulator/param');
+
+    OSCdef(\eapGranulatorFreeze, { |msg|
+        var frozen = (msg[1] ? 0).asInteger.clip(0, 1);
+        ~eapScenes[\setGranulatorFreeze].value(~eapScenes, frozen);
+    }, '/eap/granulator/freeze');
+
     OSCdef(\eapSession, { |msg|
         var slot = (msg[1] ? 1).asInteger.clip(1, 64);
         var action = (msg[2] ? 0).asInteger;

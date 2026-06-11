@@ -18,6 +18,23 @@
     ~gridFxScenes = nil;
     ~gridFxQueue = List.new;
     ~gridFxProcessing = false;
+    ~granulatorBus = nil;
+    ~granulatorBuf = nil;
+    ~granulatorSynth = nil;
+    ~granulatorActive = false;
+    ~granulatorScenes = nil;
+    ~granulatorFreeze = false;
+    // Granulator parameter cache. Values are stored as normalized 0..1 so the
+    // launchpad's 7-step vertical sliders translate cleanly, and the synth
+    // expands each one across its own range with the curve below.
+    ~granulatorParams = (
+        density:    0.35,    // 0..1 -> 0.5..100 Hz (exprange)
+        jitter:     0.0,     // 0..1 -> 0..1 linear
+        grainSize:  0.30,    // 0..1 -> 0.005..1.0 s (exprange)
+        pitch:      0.5,     // 0..1 -> -24..+24 semitones, snaps to scale when set
+        cutoff:     0.75,    // 0..1 -> 80..16000 Hz (exprange)
+        resonance:  0.10     // 0..1 -> rq 1.0..0.05 (higher slider -> more resonant)
+    );
     ~externalInputSynth = nil;
     ~externalInputHoldUntil = 0;
     ~reverbValues = nil;
@@ -827,8 +844,8 @@
             Out.ar(out, sigOut);
         }).add;
 
-        SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, sendOut = 0, gridOut = 0,
-            send = 0.5, gridSend = 0, dryAmp = 1, pit = 0, pos = 0.5,
+        SynthDef(\eapLaneCloudsFx, { |in = 0, out = 0, sendOut = 0, gridOut = 0, granOut = 0,
+            send = 0.5, gridSend = 0, granSend = 0, dryAmp = 1, pit = 0, pos = 0.5,
             size = 0.25, dens = 0.4, tex = 0.5, drywet = 0.55, in_gain = 1,
             spread = 0.5, rvb = 0.2, fb = 0.1, freeze = 0, mode = 0, lofi = 0,
             amp = 0.84, pan = 0, fadeTime = 0.05|
@@ -840,17 +857,65 @@
             sig = Limiter.ar(LeakDC.ar(sig), 0.9, 0.01);
             Out.ar(out, sig * Lag.kr(dryAmp, fadeTime).clip(0, 1));
             Out.ar(gridOut, sig * Lag.kr(gridSend, fadeTime).clip(0, 1));
+            Out.ar(granOut, sig * Lag.kr(granSend, fadeTime).clip(0, 1));
             Out.ar(sendOut, sig * Lag.kr(send, fadeTime).clip(0, 1));
         }).add;
 
-        SynthDef(\eapLaneOut, { |in = 0, out = 0, sendOut = 0, gridOut = 0,
-            amp = 0.78, pan = 0, send = 0.5, gridSend = 0, dryAmp = 1, fadeTime = 0.05|
+        SynthDef(\eapLaneOut, { |in = 0, out = 0, sendOut = 0, gridOut = 0, granOut = 0,
+            amp = 0.78, pan = 0, send = 0.5, gridSend = 0, granSend = 0, dryAmp = 1, fadeTime = 0.05|
             var sig = LeakDC.ar(In.ar(in, 2));
             sig = Balance2.ar(sig[0], sig[1], Lag.kr(pan, fadeTime).clip(-1, 1), Lag.kr(amp, fadeTime));
             sig = Limiter.ar(sig, 0.9, 0.01);
             Out.ar(out, sig * Lag.kr(dryAmp, fadeTime).clip(0, 1));
             Out.ar(gridOut, sig * Lag.kr(gridSend, fadeTime).clip(0, 1));
+            Out.ar(granOut, sig * Lag.kr(granSend, fadeTime).clip(0, 1));
             Out.ar(sendOut, sig * Lag.kr(send, fadeTime).clip(0, 1));
+        }).add;
+
+        // Live granulator + resonant low-pass. Each lane that has been
+        // selected on the granulator page writes into ~granulatorBus; this
+        // synth records that into a circular buffer (unless frozen), spawns
+        // grains, then sends the result through an RLPF.
+        //
+        // Sliders are received as normalized 0..1; the synth expands each one:
+        //   density     0..1 -> 0.5..100 Hz   (exp)
+        //   jitter      0..1 -> 0..1          (lin)
+        //   grainSize   0..1 -> 0.005..1.0 s  (exp)
+        //   pitchNorm   0..1 -> -24..+24 st   (linear; scale-snapping happens
+        //                                       in sclang before this is set)
+        //   cutoffNorm  0..1 -> 80..16000 Hz  (exp)
+        //   resoNorm    0..1 -> rq 1.0..0.05  (higher slider -> more resonant)
+        SynthDef(\eapGranulator, { |in = 0, out = 0, buf = 0, amp = 1.0,
+            densityNorm = 0.35, jitterNorm = 0.0, grainNorm = 0.30,
+            pitchSemis = 0.0, cutoffNorm = 0.75, resoNorm = 0.10,
+            freeze = 0, fadeTime = 0.08|
+            var src, mono, writeHead, frames, density, jitter, grainDur, rate;
+            var posCenter, posJit, posRead, grain, cutoff, rq, sig;
+            src = In.ar(in, 2);
+            mono = src.sum * 0.5;
+            frames = BufFrames.kr(buf);
+            // Phasor-driven write head so freeze is a clean rate-zero halt.
+            writeHead = Phasor.ar(0, 1 * (1 - Lag.kr(freeze.clip(0, 1), fadeTime)), 0, frames);
+            BufWr.ar(mono, buf, writeHead);
+            density  = Lag.kr(densityNorm, fadeTime).clip(0,1).linexp(0,1, 0.5, 100);
+            jitter   = Lag.kr(jitterNorm,  fadeTime).clip(0,1);
+            grainDur = Lag.kr(grainNorm,   fadeTime).clip(0,1).linexp(0,1, 0.005, 1.0);
+            rate     = pitchSemis.midiratio;
+            // Read from a position centered just behind the write head, jittered.
+            posCenter = ((writeHead - (grainDur * SampleRate.ir * 0.5)) / frames).wrap(0, 1);
+            posJit = (posCenter + (LFNoise2.kr(density * 2) * jitter * 0.5)).wrap(0, 1);
+            grain = GrainBuf.ar(2, Impulse.kr(density), grainDur, buf, rate, posJit,
+                2, LFNoise1.kr(density * 0.5) * jitter, -1, 64);
+            cutoff = Lag.kr(cutoffNorm, fadeTime).clip(0,1).linexp(0,1, 80, 16000);
+            rq     = Lag.kr(resoNorm,   fadeTime).clip(0,1).linlin(0,1, 1.0, 0.05);
+            sig = RLPF.ar(grain, cutoff, rq);
+            sig = LeakDC.ar(sig);
+            // Grain output is inherently sparse compared to the continuous
+            // input. A 3x boost brings it perceptually close to the dry path
+            // at typical density; the limiter catches the peaks. Resonance
+            // contributes a second gain trim because high Q narrows energy.
+            sig = sig * 3.0 * resoNorm.linlin(0,1, 1.0, 1.6);
+            Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime), 0.95, 0.005));
         }).add;
 
         SynthDef(\eapTestTone, { |out = 0, freq = 440, dur = 1.2, amp = 0.45|
@@ -2174,6 +2239,7 @@
             var synth = Synth.tail(lane[\group], \eapLaneCloudsFx, [
                 \in, currentIn, \out, self[\masterBus].index, \sendOut, self[\reverbBus].index,
                 \gridOut, self[\gridFxBus].index,
+                \granOut, (self[\granulatorBus] ? self[\masterBus]).index,
                 \pit, c[\pit], \pos, c[\pos], \size, c[\size], \dens, c[\dens],
                 \tex, c[\tex], \drywet, c[\drywet], \spread, c[\spread],
                 \rvb, c[\rvb], \fb, c[\fb], \mode, c[\mode], \lofi, c[\lofi],
@@ -2201,6 +2267,7 @@
             outSynth = Synth.new(\eapLaneOut, [
                 \in, currentIn, \out, self[\masterBus].index, \sendOut, self[\reverbBus].index,
                 \gridOut, self[\gridFxBus].index,
+                \granOut, (self[\granulatorBus] ? self[\masterBus]).index,
                 \amp, lane[\level] ? 1.0, \pan, lane[\pan] ? 0.0,
                 \send, lane[\reverbSend] ? 0.5
             ], target, \addAfter);
@@ -2216,18 +2283,29 @@
         slot > 0 and: { scenes.notNil and: { scenes[slot - 1] == true } };
     };
 
+    ~laneGranulatorSelected = { |self, lane|
+        var slot = if(lane.notNil, { (lane[\slot] ? 0).asInteger }, { 0 });
+        var scenes = self[\granulatorScenes];
+        slot > 0 and: { scenes.notNil and: { scenes[slot - 1] == true } };
+    };
+
     ~applyLaneOutput = { |self, lane|
         if(lane.notNil and: { lane[\outSynth].notNil }) {
             var routedToGrid = (self[\gridFxActive] ? false).asBoolean and: {
                 self[\laneGridFxSelected].value(self, lane)
             };
+            var routedToGran = (self[\granulatorActive] ? false).asBoolean and: {
+                self[\laneGranulatorSelected].value(self, lane)
+            };
+            var anyExternal = routedToGrid or: { routedToGran };
             var audible = lane[\state] == \active;
             lane[\outSynth].set(
                 \amp, if(audible, { lane[\level] ? 1.0 }, { 0.0 }),
                 \pan, lane[\pan] ? 0.0,
                 \send, lane[\reverbSend] ? 0.5,
-                \dryAmp, if(routedToGrid, { 0.0 }, { 1.0 }),
-                \gridSend, if(routedToGrid, { 1.0 }, { 0.0 })
+                \dryAmp, if(anyExternal, { 0.0 }, { 1.0 }),
+                \gridSend, if(routedToGrid, { 1.0 }, { 0.0 }),
+                \granSend, if(routedToGran, { 1.0 }, { 0.0 })
             );
         };
         lane;
@@ -2861,6 +2939,86 @@
         state;
     };
 
+    ~applyGranulatorRouting = { |self|
+        self[\slots].do({ |lane|
+            if(lane.notNil and: { lane[\state] == \active }) {
+                self[\applyLaneOutput].value(self, lane);
+            };
+        });
+    };
+
+    ~pushGranulatorParams = { |self|
+        var p = self[\granulatorParams];
+        var pitchNorm = (p[\pitch] ? 0.5);
+        var pitchSemis = pitchNorm.linlin(0, 1, -24, 24);
+        // Scale-snap when a scale is selected (any of the named ones).
+        if(self[\scales].notNil and: { self[\scaleIndex].notNil }, {
+            var scale = self[\scales].wrapAt(self[\scaleIndex]);
+            if(scale.notNil and: { scale.size > 0 }, {
+                var nearest = scale.collect({ |d|
+                    var candidate = d.asInteger;
+                    (candidate - pitchSemis.round).abs;
+                }).minIndex;
+                pitchSemis = scale.asArray[nearest].asInteger;
+            });
+        });
+        if(self[\granulatorSynth].notNil, {
+            self[\granulatorSynth].set(
+                \densityNorm, p[\density],
+                \jitterNorm, p[\jitter],
+                \grainNorm, p[\grainSize],
+                \pitchSemis, pitchSemis,
+                \cutoffNorm, p[\cutoff],
+                \resoNorm, p[\resonance],
+                \freeze, if((self[\granulatorFreeze] ? false).asBoolean, { 1 }, { 0 })
+            );
+        });
+    };
+
+    ~setGranulatorActive = { |self, active|
+        var enabled = active.asBoolean;
+        self[\granulatorActive] = enabled;
+        if(self[\granulatorSynth].notNil, {
+            self[\granulatorSynth].set(\amp, if(enabled, { 1.0 }, { 0.0 }));
+        });
+        self[\applyGranulatorRouting].value(self);
+        ("EAP granulator active=" ++ enabled).postln;
+        enabled;
+    };
+
+    ~setGranulatorScene = { |self, slot, enabled|
+        var index = slot.asInteger.clip(1, self[\maxScenes]);
+        var state = enabled.asInteger > 0;
+        if(self[\granulatorScenes].isNil, {
+            self[\granulatorScenes] = Array.fill(self[\maxScenes], { false });
+        });
+        self[\granulatorScenes][index - 1] = state;
+        self[\applyGranulatorRouting].value(self);
+        ("EAP granulator scene " ++ index ++ " selected=" ++ state).postln;
+        state;
+    };
+
+    ~setGranulatorParam = { |self, paramCode, value|
+        // paramCode 1..6 = density, jitter, grainSize, pitch, cutoff, resonance.
+        // value is the same 0..1 normalized form used in ~granulatorParams.
+        var name = #[\density, \jitter, \grainSize, \pitch, \cutoff, \resonance].wrapAt(paramCode.asInteger - 1);
+        var v = value.asFloat.clip(0, 1);
+        if(name.notNil, {
+            self[\granulatorParams][name] = v;
+            self[\pushGranulatorParams].value(self);
+            ("EAP granulator param " ++ name ++ "=" ++ v).postln;
+        });
+        v;
+    };
+
+    ~setGranulatorFreeze = { |self, frozen|
+        var state = frozen.asInteger > 0;
+        self[\granulatorFreeze] = state;
+        self[\pushGranulatorParams].value(self);
+        ("EAP granulator freeze=" ++ state).postln;
+        state;
+    };
+
     ~reverbArg = { |self, param, value|
         var v = value.asFloat.clip(0, 1);
         switch(param,
@@ -3354,7 +3512,11 @@
         self[\group] = Group.tail(s);
         self[\masterBus] = Bus.audio(s, 2);
         self[\gridFxBus] = Bus.audio(s, 2);
+        self[\granulatorBus] = Bus.audio(s, 2);
         self[\reverbBus] = Bus.audio(s, 2);
+        // 8 s of mono buffer is enough for textural granular without burning
+        // memory; resonant LPF after the grain bank gives the "frozen" feel.
+        self[\granulatorBuf] = Buffer.alloc(s, 48000 * 8, 1);
         self[\makeSynthDefs].value(self);
         s.sync;
         self[\reverbValues] = [0.24, 0.55, 0.45, 0.36, 0.25, 0.74, 0.24, 0.62];
@@ -3365,6 +3527,17 @@
         self[\gridFxQueue].clear;
         self[\gridFxProcessing] = false;
         self[\gridFxSendSynth] = Synth.head(self[\masterGroup], \eapGridFxSend, [\in, self[\gridFxBus].index, \out, 2, \amp, 0.0]);
+        self[\granulatorActive] = false;
+        self[\granulatorFreeze] = false;
+        self[\granulatorScenes] = Array.fill(self[\maxScenes], { false });
+        // Granulator sits ahead of the master synth so its output goes to
+        // ~masterBus along with every other source. amp starts at 0 and is
+        // raised to 1 by ~setGranulatorActive when the page is engaged.
+        self[\granulatorSynth] = Synth.head(self[\masterGroup], \eapGranulator, [
+            \in, self[\granulatorBus].index, \out, self[\masterBus].index,
+            \buf, self[\granulatorBuf].bufnum, \amp, 0.0
+        ]);
+        self[\pushGranulatorParams].value(self);
         self[\externalInputSynth] = nil;
         self[\masterSynth] = Synth.tail(self[\masterGroup], \eapSceneMaster, [
             \in, self[\masterBus].index, \reverbIn, self[\reverbBus].index, \out, 0
@@ -3390,9 +3563,12 @@
         { "/usr/local/bin/eap-airwindows-grid-fx --clear".unixCmd; }.defer(0.05);
         if(self[\externalInputSynth].notNil) { self[\externalInputSynth].free; self[\externalInputSynth] = nil; };
         if(self[\gridFxSendSynth].notNil) { self[\gridFxSendSynth].free; self[\gridFxSendSynth] = nil; };
+        if(self[\granulatorSynth].notNil) { self[\granulatorSynth].free; self[\granulatorSynth] = nil; };
         if(self[\masterSynth].notNil) { self[\masterSynth].free; self[\masterSynth] = nil; };
         if(self[\masterBus].notNil) { self[\masterBus].free; self[\masterBus] = nil; };
         if(self[\gridFxBus].notNil) { self[\gridFxBus].free; self[\gridFxBus] = nil; };
+        if(self[\granulatorBus].notNil) { self[\granulatorBus].free; self[\granulatorBus] = nil; };
+        if(self[\granulatorBuf].notNil) { self[\granulatorBuf].free; self[\granulatorBuf] = nil; };
         if(self[\reverbBus].notNil) { self[\reverbBus].free; self[\reverbBus] = nil; };
         if(self[\masterGroup].notNil) { self[\masterGroup].free; self[\masterGroup] = nil; };
         if(self[\group].notNil) { self[\group].free; self[\group] = nil; };
