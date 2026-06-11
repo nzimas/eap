@@ -98,9 +98,9 @@ RGB_GRAN_SCENE_SELECTED = (0, 126, 42)
 # All sliders share a single purple family so the page reads as one unit.
 RGB_GRAN_SLIDER_BG = (8, 6, 18)
 RGB_GRAN_SLIDER_LIT = (80, 60, 126)
-RGB_GRAN_ACTIVE_IDLE = (10, 18, 4)
+RGB_GRAN_ACTIVE_IDLE = (40, 66, 16)
 RGB_GRAN_ACTIVE_ON = (40, 126, 18)
-RGB_FREEZE_IDLE = (4, 14, 18)
+RGB_FREEZE_IDLE = (14, 50, 64)
 RGB_FREEZE_ACTIVE = (40, 126, 126)
 RGB_SETTINGS_DIM = (8, 8, 10)
 RGB_SETTINGS_VALUE = (44, 44, 56)
@@ -706,8 +706,9 @@ def paint_scene_page(pads: dict[int, Pad], held_modifier_cc: int | None = None) 
     send_led(SETTINGS_CC, RGB_SETTINGS_DIM)
     send_led(GRID_FX_CC, RGB_GRID_FX_IDLE)
     send_led(GRANULATOR_CC, RGB_GRAN_IDLE)
-    send_led(GRAN_ACTIVE_CC, RGB_GRAN_ACTIVE_IDLE)
-    send_led(FREEZE_CC, RGB_FREEZE_IDLE)
+    # CC 28 (on/off) and CC 38 (freeze) only belong to the granulator page;
+    # leave them dark when the user is on the main scenes view. The matrix
+    # clear above already turned pads 28 and 38 off.
 
 
 def col_for_value(value: int) -> int:
