@@ -1587,7 +1587,20 @@ def main() -> int:
                 continue
             if mode == "granulator":
                 if kind == "on":
-                    handle_granulator_note(note, granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
+                    # CC 28 (active) and CC 38 (freeze) are matrix pads on the
+                    # Launchpad Mini Mk3, so they arrive here as Note On rather
+                    # than as MIDI CCs. Handle the toggles inline since we
+                    # have direct access to the local bool state.
+                    if note == GRAN_ACTIVE_CC:
+                        granulator_active = not granulator_active
+                        send_granulator_active_osc(granulator_active)
+                        paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
+                    elif note == FREEZE_CC:
+                        granulator_freeze = not granulator_freeze
+                        send_granulator_freeze_osc(granulator_freeze)
+                        paint_granulator_page(granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
+                    else:
+                        handle_granulator_note(note, granulator_params, pads, granulator_scenes, granulator_freeze, granulator_active)
                 continue
             if mode == "settings":
                 if kind == "on":
