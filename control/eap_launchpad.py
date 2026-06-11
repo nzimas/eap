@@ -95,9 +95,15 @@ RGB_GRAN_PAGE = (40, 28, 126)
 RGB_GRAN_DIM = (6, 4, 14)
 RGB_GRAN_SCENE_ACTIVE = (0, 62, 14)
 RGB_GRAN_SCENE_SELECTED = (0, 126, 42)
-# All sliders share a single purple family so the page reads as one unit.
-RGB_GRAN_SLIDER_BG = (8, 6, 18)
-RGB_GRAN_SLIDER_LIT = (80, 60, 126)
+# Granular params (cols 1-4) are bipolar and purple; the filter params
+# (cols 5-6) are unipolar and amber; dry/wet (col 7) is unipolar and teal.
+RGB_GRAN_SLIDER_BG = (8, 6, 18)         # granular trail
+RGB_GRAN_SLIDER_LIT = (80, 60, 126)     # granular lit
+RGB_GRAN_CENTER = (110, 96, 126)        # bipolar centre line marker
+RGB_FILT_SLIDER_BG = (16, 8, 2)         # filter trail
+RGB_FILT_SLIDER_LIT = (126, 78, 10)     # filter lit
+RGB_MIX_SLIDER_BG = (2, 14, 12)         # dry/wet trail
+RGB_MIX_SLIDER_LIT = (12, 120, 104)     # dry/wet lit
 RGB_GRAN_ACTIVE_IDLE = (40, 66, 16)
 RGB_GRAN_ACTIVE_ON = (40, 126, 18)
 RGB_FREEZE_IDLE = (14, 50, 64)
@@ -123,15 +129,23 @@ GRANULATOR_CC = 79
 GRAN_ACTIVE_CC = 28    # on/off for granulator processing; only listens on the page
 FREEZE_CC = 38         # write-head freeze; only listens on the page
 # Seven vertical sliders, one per granulator parameter. Each lives in one
-# column of the matrix; rows 2..8 form a 7-step bar with row 2 = 0 and
-# row 8 = max (slider grows from the top down, per user preference).
+# column of the matrix; rows 2..8 form a 7-step bar with row 2 (top) = min and
+# row 8 (bottom) = max (slider grows from the bottom up, per user preference).
 GRAN_PARAM_NAMES = ["density", "jitter", "grain_size", "pitch", "cutoff", "resonance", "dry_wet"]
 GRAN_SLIDER_COLS = (1, 2, 3, 4, 5, 6, 7)   # col 8 left blank
 GRAN_SLIDER_ROWS = (2, 3, 4, 5, 6, 7, 8)
 GRAN_SLIDER_STEPS = len(GRAN_SLIDER_ROWS)        # 7
+GRAN_CENTER_ROW = 5                              # row 5 = bipolar centre (cc ~64)
 GRAN_SCENE_ROW = 1                                # top row reserved for scene picks
+# Columns 1-4 are the granular params and behave as bipolar (centre-detented)
+# sliders; the centre is the neutral value (e.g. density centre = "no grains",
+# pitch centre = unison). Columns 5-7 (cutoff, resonance, dry/wet) stay unipolar.
+GRAN_BIPOLAR_COLS = (1, 2, 3, 4)
+# Defaults: density just above centre so there are audible grains, jitter and
+# size at centre, pitch at centre (unison); cutoff fairly open, low resonance,
+# full wet.  cc 64 == bipolar centre.
 # density, jitter, grain, pitch, cutoff, reso, dry/wet
-GRAN_DEFAULTS_CC = [45, 0, 38, 64, 95, 13, 127]
+GRAN_DEFAULTS_CC = [82, 64, 64, 64, 95, 13, 127]
 
 STATE_BLANK = 0
 STATE_ACTIVE = 1
@@ -1002,14 +1016,19 @@ def gran_slider_col_for_note(note: int) -> int | None:
 
 
 def gran_value_cc_for_row(row: int) -> int:
-    # Row 2 (top) -> 0, row 8 (bottom) -> 127. Slider grows from the top
-    # downward as value rises -- the user prefers this orientation.
+    # Row 2 (top) -> 0, row 8 (bottom) -> 127. The bar grows from the bottom
+    # up as the value rises. Row 5 lands on ~cc 64, the bipolar centre.
     step = max(0, row - 2)
     return int(round((step / (GRAN_SLIDER_STEPS - 1)) * 127))
 
 
+def gran_value_row_for_cc(cc_value: int) -> int:
+    # Inverse of gran_value_cc_for_row: which row a cc value sits on (2..8).
+    return int(round((cc_value / 127) * (GRAN_SLIDER_STEPS - 1))) + 2
+
+
 def gran_lit_count_for_value(cc_value: int) -> int:
-    # How many vertical pads to light from the top downward for a given cc.
+    # Unipolar fill: how many pads to light from the bottom up for a given cc.
     return int(round((cc_value / 127) * GRAN_SLIDER_STEPS))
 
 
@@ -1043,12 +1062,26 @@ def paint_granulator_page(
         if col in GRAN_SLIDER_COLS and row in GRAN_SLIDER_ROWS:
             param_idx = col - 1
             cc_value = granulator_params[param_idx]
-            lit = gran_lit_count_for_value(cc_value)
-            step = row - 2  # row 2 (top) -> 0, row 8 (bottom) -> 6
-            if step < lit:
-                send_led(note, RGB_GRAN_SLIDER_LIT)
+            if col in GRAN_BIPOLAR_COLS:
+                # Bipolar: lit band runs from the centre row to the value row,
+                # with the centre always marked so the neutral point is findable.
+                value_row = gran_value_row_for_cc(cc_value)
+                lo, hi = sorted((GRAN_CENTER_ROW, value_row))
+                if row == GRAN_CENTER_ROW:
+                    send_led(note, RGB_GRAN_CENTER)
+                elif lo <= row <= hi:
+                    send_led(note, RGB_GRAN_SLIDER_LIT)
+                else:
+                    send_led(note, RGB_GRAN_SLIDER_BG)
             else:
-                send_led(note, RGB_GRAN_SLIDER_BG)
+                # Unipolar: fill from the bottom up. Filter cols amber, dry/wet teal.
+                lit = gran_lit_count_for_value(cc_value)
+                lit_colour = RGB_MIX_SLIDER_LIT if col == 7 else RGB_FILT_SLIDER_LIT
+                bg_colour = RGB_MIX_SLIDER_BG if col == 7 else RGB_FILT_SLIDER_BG
+                if row > (8 - lit):
+                    send_led(note, lit_colour)
+                else:
+                    send_led(note, bg_colour)
             continue
         send_led(note, RGB_GRAN_DIM)
     send_led(GRANULATOR_CC, RGB_GRAN_PAGE)

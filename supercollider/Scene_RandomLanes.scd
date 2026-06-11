@@ -26,14 +26,18 @@
     // Granulator parameter cache. Values are stored as normalized 0..1 so the
     // launchpad's 7-step vertical sliders translate cleanly, and the synth
     // expands each one across its own range with the curve below.
+    // Defaults mirror the launchpad's GRAN_DEFAULTS_CC so the slider positions
+    // match the real engine state before anything is touched. density,
+    // grainSize and pitch are bipolar around 0.5 (MiClouds dens 0.5 = no grains,
+    // pitch 0.5 = unison); density sits just above centre for audible grains.
     ~granulatorParams = (
-        density:    0.35,    // 0..1 -> 0.5..100 Hz (exprange)
-        jitter:     0.0,     // 0..1 -> 0..1 linear
-        grainSize:  0.30,    // 0..1 -> 0.005..1.0 s (exprange)
-        pitch:      0.5,     // 0..1 -> -24..+24 semitones, snaps to scale when set
-        cutoff:     0.75,    // 0..1 -> 80..16000 Hz (exprange)
-        resonance:  0.10,    // 0..1 -> rq 1.0..0.05 (higher slider -> more resonant)
-        dryWet:     1.0      // 0..1 -> 0% .. 100% wet at the granulator output
+        density:    0.65,    // -> MiClouds dens (0.5 = no grains, 1 periodic, 0 random)
+        jitter:     0.5,     // -> read-position scatter + stereo spread
+        grainSize:  0.5,     // -> MiClouds size
+        pitch:      0.5,     // -> -24..+24 semitones (0.5 = unison), snaps to scale
+        cutoff:     0.75,    // -> post RLPF cutoff 80..16000 Hz (grains only)
+        resonance:  0.10,    // -> post RLPF rq 1.0..0.05 (grains only)
+        dryWet:     1.0      // -> blend of dry source vs filtered grains
     );
     ~externalInputSynth = nil;
     ~externalInputHoldUntil = 0;
@@ -890,7 +894,7 @@
             densityNorm = 0.35, jitterNorm = 0.0, grainNorm = 0.30,
             pitchSemis = 0.0, cutoffNorm = 0.75, resoNorm = 0.10,
             dryWet = 1.0, freeze = 0, fadeTime = 0.2|
-            var src, dens, size, jitter, pos, spread, tex, pit, drywet, sig, cutoff, rq;
+            var src, dens, size, jitter, pos, spread, tex, pit, drywet, grains, wet, sig, cutoff, rq;
             src = LeakDC.ar(In.ar(in, 2));
             dens   = Lag.kr(densityNorm, fadeTime).clip(0, 1);
             size   = Lag.kr(grainNorm,   fadeTime).clip(0, 1);
@@ -901,14 +905,18 @@
             pos    = (0.5 + (LFNoise2.kr(12) * jitter * 0.5)).clip(0, 1);
             spread = jitter;
             tex    = 0.5;
+            // Run MiClouds fully wet (drywet = 1) so it returns grains only,
+            // then apply the resonant low-pass to the GRAINS alone. The dry/wet
+            // blend is done afterwards between the unfiltered source and the
+            // filtered grains, so the filter never colours the original scene.
             // MiClouds.ar(inputArray, pit, pos, size, dens, tex, drywet,
             //   in_gain, spread, rvb, fb, freeze, mode, lofi, trig)
-            sig = MiClouds.ar(src, pit, pos, size, dens, tex, drywet, 1.0, spread,
+            grains = MiClouds.ar(src, pit, pos, size, dens, tex, 1.0, 1.0, spread,
                 0, 0, freeze.clip(0, 1), 0, 0, 0);
             cutoff = Lag.kr(cutoffNorm, fadeTime).clip(0, 1).linexp(0, 1, 80, 16000);
             rq     = Lag.kr(resoNorm,   fadeTime).clip(0, 1).linlin(0, 1, 1.0, 0.05);
-            sig = RLPF.ar(sig, cutoff, rq);
-            sig = LeakDC.ar(sig);
+            wet = LeakDC.ar(RLPF.ar(grains, cutoff, rq));
+            sig = (src * (1 - drywet)) + (wet * drywet);
             Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime), 0.95, 0.005));
         }).add;
 
