@@ -19,7 +19,6 @@
     ~gridFxQueue = List.new;
     ~gridFxProcessing = false;
     ~granulatorBus = nil;
-    ~granulatorBuf = nil;
     ~granulatorSynth = nil;
     ~granulatorActive = false;
     ~granulatorScenes = nil;
@@ -873,55 +872,43 @@
             Out.ar(sendOut, sig * Lag.kr(send, fadeTime).clip(0, 1));
         }).add;
 
-        // Live granulator + resonant low-pass. Each lane that has been
-        // selected on the granulator page writes into ~granulatorBus; this
-        // synth records that into a circular buffer (unless frozen), spawns
-        // grains, then sends the result through an RLPF.
+        // Live granulator built on MiClouds (Mutable Instruments Clouds) plus
+        // a resonant low-pass, no internal reverb (EAP has a master reverb).
+        // Clouds gives native full-range density, a clickless freeze, and a
+        // dry/wet that passes the source through cleanly at dryWet = 0, so
+        // engaging the page does not cause a volume jump on the routed scene.
         //
-        // Sliders are received as normalized 0..1; the synth expands each one:
-        //   density     0..1 -> 0.5..100 Hz   (exp)
-        //   jitter      0..1 -> 0..1          (lin)
-        //   grainSize   0..1 -> 0.005..1.0 s  (exp)
-        //   pitchNorm   0..1 -> -24..+24 st   (linear; scale-snapping happens
-        //                                       in sclang before this is set)
-        //   cutoffNorm  0..1 -> 80..16000 Hz  (exp)
-        //   resoNorm    0..1 -> rq 1.0..0.05  (higher slider -> more resonant)
-        SynthDef(\eapGranulator, { |in = 0, out = 0, buf = 0, amp = 1.0,
+        // Sliders are received as normalized 0..1; mapped here as:
+        //   density     -> Clouds dens  0..1   (grain rate / overlap)
+        //   jitter      -> read-position scatter + stereo spread
+        //   grainSize   -> Clouds size  0..1
+        //   pitch       -> Clouds pit semitones (scale-snapped in sclang)
+        //   cutoff      -> post RLPF cutoff  80..16000 Hz (exp)
+        //   resonance   -> post RLPF rq      1.0..0.05 (higher slider = more)
+        //   dryWet      -> Clouds drywet 0..1
+        SynthDef(\eapGranulator, { |in = 0, out = 0, amp = 1.0,
             densityNorm = 0.35, jitterNorm = 0.0, grainNorm = 0.30,
             pitchSemis = 0.0, cutoffNorm = 0.75, resoNorm = 0.10,
-            dryWet = 1.0,
-            freeze = 0, fadeTime = 0.08|
-            var src, mono, writeHead, frames, density, jitter, grainDur, rate;
-            var posCenter, posJit, posRead, grain, cutoff, rq, sig, wet, mix;
-            src = In.ar(in, 2);
-            mono = src.sum * 0.5;
-            frames = BufFrames.kr(buf);
-            // Phasor-driven write head so freeze is a clean rate-zero halt.
-            writeHead = Phasor.ar(0, 1 * (1 - Lag.kr(freeze.clip(0, 1), fadeTime)), 0, frames);
-            BufWr.ar(mono, buf, writeHead);
-            density  = Lag.kr(densityNorm, fadeTime).clip(0,1).linexp(0,1, 0.5, 100);
-            jitter   = Lag.kr(jitterNorm,  fadeTime).clip(0,1);
-            grainDur = Lag.kr(grainNorm,   fadeTime).clip(0,1).linexp(0,1, 0.005, 1.0);
-            rate     = pitchSemis.midiratio;
-            // Read from a position centered just behind the write head, jittered.
-            posCenter = ((writeHead - (grainDur * SampleRate.ir * 0.5)) / frames).wrap(0, 1);
-            posJit = (posCenter + (LFNoise2.kr(density * 2) * jitter * 0.5)).wrap(0, 1);
-            grain = GrainBuf.ar(2, Impulse.kr(density), grainDur, buf, rate, posJit,
-                2, LFNoise1.kr(density * 0.5) * jitter, -1, 64);
-            cutoff = Lag.kr(cutoffNorm, fadeTime).clip(0,1).linexp(0,1, 80, 16000);
-            rq     = Lag.kr(resoNorm,   fadeTime).clip(0,1).linlin(0,1, 1.0, 0.05);
-            wet = RLPF.ar(grain, cutoff, rq);
-            wet = LeakDC.ar(wet);
-            // Grain output is inherently sparse compared to the continuous
-            // input. A 3x boost brings it perceptually close to the dry path
-            // at typical density; the limiter catches the peaks. Resonance
-            // contributes a second gain trim because high Q narrows energy.
-            wet = wet * 3.0 * resoNorm.linlin(0,1, 1.0, 1.6);
-            // Dry/wet between the raw stereo input and the processed grains.
-            // At dryWet = 0 the granulator acts as a pass-through, so the
-            // page can be left engaged on quiet scenes without colour change.
-            mix = Lag.kr(dryWet, fadeTime).clip(0, 1);
-            sig = (src * (1 - mix)) + (wet * mix);
+            dryWet = 1.0, freeze = 0, fadeTime = 0.2|
+            var src, dens, size, jitter, pos, spread, tex, pit, drywet, sig, cutoff, rq;
+            src = LeakDC.ar(In.ar(in, 2));
+            dens   = Lag.kr(densityNorm, fadeTime).clip(0, 1);
+            size   = Lag.kr(grainNorm,   fadeTime).clip(0, 1);
+            jitter = Lag.kr(jitterNorm,  fadeTime).clip(0, 1);
+            pit    = Lag.kr(pitchSemis,  fadeTime);
+            drywet = Lag.kr(dryWet,      fadeTime).clip(0, 1);
+            // Jitter scatters the read position and widens the stereo image.
+            pos    = (0.5 + (LFNoise2.kr(12) * jitter * 0.5)).clip(0, 1);
+            spread = jitter;
+            tex    = 0.5;
+            // MiClouds.ar(inputArray, pit, pos, size, dens, tex, drywet,
+            //   in_gain, spread, rvb, fb, freeze, mode, lofi, trig)
+            sig = MiClouds.ar(src, pit, pos, size, dens, tex, drywet, 1.0, spread,
+                0, 0, freeze.clip(0, 1), 0, 0, 0);
+            cutoff = Lag.kr(cutoffNorm, fadeTime).clip(0, 1).linexp(0, 1, 80, 16000);
+            rq     = Lag.kr(resoNorm,   fadeTime).clip(0, 1).linlin(0, 1, 1.0, 0.05);
+            sig = RLPF.ar(sig, cutoff, rq);
+            sig = LeakDC.ar(sig);
             Out.ar(out, Limiter.ar(sig * Lag.kr(amp, fadeTime), 0.95, 0.005));
         }).add;
 
@@ -2301,9 +2288,13 @@
             var routedToGrid = (self[\gridFxActive] ? false).asBoolean and: {
                 self[\laneGridFxSelected].value(self, lane)
             };
-            var routedToGran = (self[\granulatorActive] ? false).asBoolean and: {
-                self[\laneGranulatorSelected].value(self, lane)
-            };
+            // Scenes selected on the granulator page feed it whenever they are
+            // selected -- not only while the granulator is engaged -- so MiClouds'
+            // internal buffer stays warm. Engaging then only crossfades the dry
+            // scene out and the (already-running) granulated output in, with no
+            // empty-buffer startup gap.
+            var granSelected = self[\laneGranulatorSelected].value(self, lane);
+            var routedToGran = (self[\granulatorActive] ? false).asBoolean and: { granSelected };
             var anyExternal = routedToGrid or: { routedToGran };
             var audible = lane[\state] == \active;
             lane[\outSynth].set(
@@ -2312,7 +2303,7 @@
                 \send, lane[\reverbSend] ? 0.5,
                 \dryAmp, if(anyExternal, { 0.0 }, { 1.0 }),
                 \gridSend, if(routedToGrid, { 1.0 }, { 0.0 }),
-                \granSend, if(routedToGran, { 1.0 }, { 0.0 })
+                \granSend, if(granSelected, { 1.0 }, { 0.0 })
             );
         };
         lane;
@@ -3522,9 +3513,6 @@
         self[\gridFxBus] = Bus.audio(s, 2);
         self[\granulatorBus] = Bus.audio(s, 2);
         self[\reverbBus] = Bus.audio(s, 2);
-        // 8 s of mono buffer is enough for textural granular without burning
-        // memory; resonant LPF after the grain bank gives the "frozen" feel.
-        self[\granulatorBuf] = Buffer.alloc(s, 48000 * 8, 1);
         self[\makeSynthDefs].value(self);
         s.sync;
         self[\reverbValues] = [0.24, 0.55, 0.45, 0.36, 0.25, 0.74, 0.24, 0.62];
@@ -3542,8 +3530,7 @@
         // ~masterBus along with every other source. amp starts at 0 and is
         // raised to 1 by ~setGranulatorActive when the page is engaged.
         self[\granulatorSynth] = Synth.head(self[\masterGroup], \eapGranulator, [
-            \in, self[\granulatorBus].index, \out, self[\masterBus].index,
-            \buf, self[\granulatorBuf].bufnum, \amp, 0.0
+            \in, self[\granulatorBus].index, \out, self[\masterBus].index, \amp, 0.0
         ]);
         self[\pushGranulatorParams].value(self);
         self[\externalInputSynth] = nil;
@@ -3576,7 +3563,6 @@
         if(self[\masterBus].notNil) { self[\masterBus].free; self[\masterBus] = nil; };
         if(self[\gridFxBus].notNil) { self[\gridFxBus].free; self[\gridFxBus] = nil; };
         if(self[\granulatorBus].notNil) { self[\granulatorBus].free; self[\granulatorBus] = nil; };
-        if(self[\granulatorBuf].notNil) { self[\granulatorBuf].free; self[\granulatorBuf] = nil; };
         if(self[\reverbBus].notNil) { self[\reverbBus].free; self[\reverbBus] = nil; };
         if(self[\masterGroup].notNil) { self[\masterGroup].free; self[\masterGroup] = nil; };
         if(self[\group].notNil) { self[\group].free; self[\group] = nil; };
