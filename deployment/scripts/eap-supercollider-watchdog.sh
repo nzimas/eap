@@ -4,7 +4,10 @@ set -euo pipefail
 
 BOOT_FILE="${EAP_SC_BOOT:-/opt/electroacoustic-playground/supercollider/boot.scd}"
 MISSING_LIMIT="${EAP_SC_MISSING_LIMIT:-3}"
-CHECK_INTERVAL="${EAP_SC_CHECK_INTERVAL:-5}"
+# 1 s poll: detect a scsynth disappearance in <= 3 s instead of <= 15 s.
+# sclang also self-exits via the ServerQuit hook in boot.scd, so most of
+# the time we never even hit this loop -- the wait below returns first.
+CHECK_INTERVAL="${EAP_SC_CHECK_INTERVAL:-1}"
 BOOT_GRACE="${EAP_SC_BOOT_GRACE:-25}"
 
 /usr/bin/sclang -D "$BOOT_FILE" &
@@ -34,4 +37,9 @@ while kill -0 "$sclang_pid" 2>/dev/null; do
     sleep "$CHECK_INTERVAL"
 done
 
-wait "$sclang_pid"
+# sclang exited (cleanly via the ServerQuit hook, or because scsynth went
+# away and the loop above caught it). Reap and always report failure so
+# systemd's Restart=on-failure picks up the unit.
+wait "$sclang_pid" || true
+echo "EAP SuperCollider watchdog: sclang exited; reporting failure so systemd restarts the service" >&2
+exit 1

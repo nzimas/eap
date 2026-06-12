@@ -22,6 +22,29 @@ s.latency = 0.1;
 
 s.waitForBoot({
     "Electroacoustic Playground: server booted".postln;
+    // If scsynth disappears while sclang stays alive, the watchdog has to
+    // poll JACK ports for up to 15 s before it notices. Exit sclang the
+    // moment ServerProcess sees scsynth gone -- systemd then restarts the
+    // unit in ~2 s (RestartSec), shaving roughly 10 s off recovery time.
+    ServerQuit.add({ |srv|
+        if(srv == Server.default, {
+            "EAP: scsynth exited; sclang will exit so systemd can restart the unit".postln;
+            // Non-zero exit so the watchdog/systemd treat this as failure.
+            AppClock.sched(0.2, { 1.exit; nil });
+        });
+    }, Server.default);
+    // Diagnostic heartbeat every 5 minutes -- cheap to run, and gives the
+    // journal a trail of synth/group counts and CPU so any drift before a
+    // future scsynth exit is visible in retrospect.
+    Routine({
+        loop {
+            300.wait;
+            ("EAP heartbeat synths=" ++ s.numSynths
+                ++ " groups=" ++ s.numGroups
+                ++ " avgCPU=" ++ s.avgCPU.round(0.1)
+                ++ " peakCPU=" ++ s.peakCPU.round(0.1)).postln;
+        };
+    }).play(AppClock);
     thisProcess.interpreter.executeFile("/opt/electroacoustic-playground/supercollider/fx/Fx_Pedalboard.scd");
     thisProcess.interpreter.executeFile("/opt/electroacoustic-playground/supercollider/Scene_RandomLanes.scd");
     s.sync;
