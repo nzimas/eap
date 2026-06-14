@@ -54,6 +54,10 @@
     ~muteMode = \refresh;
     ~sourceEnginePreference = nil;
     ~sessionDir = "/home/we/.local/share/eap/sessions";
+    // Persisted control prefs (engine, scale, root, mute mode). Restored on
+    // boot so a stack restart does not silently disable scene generation by
+    // resetting the source-engine preference to nil.
+    ~prefsPath = "/home/we/.local/share/eap/control-prefs.txt";
     ~lanes = List.new;
     ~slots = nil;
     ~cloudLaneIndex = nil;
@@ -101,7 +105,44 @@
         self[\sourceEnginePreference] = engine;
         self[\syncSubsequenceEngine].value(self);
         ("EAP future source engine=" ++ (engine ? \none)).postln;
+        self[\saveControlPrefs].value(self);
         engine;
+    };
+
+    ~saveControlPrefs = { |self|
+        // One space-separated line: engineCode scaleIndex rootNote muteCode.
+        var engineCode = self[\sourceEngineCode].value(self);
+        var muteCode = if(self[\muteMode] == \output, { 0 }, { 1 });
+        var line = engineCode.asString ++ " " ++ self[\scaleIndex].asString ++ " "
+            ++ self[\rootNote].asString ++ " " ++ muteCode.asString;
+        try {
+            File.use(self[\prefsPath], "w", { |f| f.write(line); });
+        } { |err|
+            ("EAP could not save control prefs: " ++ err.errorString).postln;
+        };
+    };
+
+    ~loadControlPrefs = { |self|
+        var path = self[\prefsPath];
+        if(File.exists(path), {
+            try {
+                var parts = File.readAllString(path).stripWhiteSpace.split($ );
+                if(parts.size >= 4, {
+                    self[\scaleIndex] = parts[1].asInteger.clip(0, self[\scales].size - 1);
+                    self[\rootNote] = parts[2].asInteger.clip(0, 11);
+                    self[\muteMode] = self[\muteModeFromCode].value(self, parts[3].asInteger);
+                    // Apply the engine last so its subsequence sync sees the
+                    // restored scale/root. setSourceEnginePreference re-saves
+                    // the same values, which is harmless.
+                    self[\setSourceEnginePreference].value(self, parts[0].asInteger);
+                    ("EAP control prefs restored: engine=" ++ parts[0] ++ " scale="
+                        ++ self[\scaleIndex] ++ " root=" ++ self[\rootNote]
+                        ++ " mute=" ++ self[\muteMode]).postln;
+                });
+            } { |err|
+                ("EAP could not load control prefs: " ++ err.errorString).postln;
+            };
+        });
     };
 
     ~sourceEngineCode = { |self|
@@ -120,6 +161,7 @@
 
     ~setMuteMode = { |self, code|
         self[\muteMode] = self[\muteModeFromCode].value(self, code);
+        self[\saveControlPrefs].value(self);
         ("EAP mute mode=" ++ self[\muteMode]).postln;
         self[\muteMode];
     };
@@ -3102,6 +3144,7 @@
         });
         self[\playTuningPreview].value(self);
         self[\syncSubsequenceTuning].value(self);
+        self[\saveControlPrefs].value(self);
         ("EAP tuning scale=" ++ self[\scaleIndex] ++ " root=" ++ self[\rootNote]).postln;
         1;
     };
@@ -3556,6 +3599,11 @@
         self[\lanes].clear;
         self[\adaptiveJournal].clear;
         self[\adaptiveSerial] = 0;
+        // Restore the persisted engine/scale/root/mute so a stack restart
+        // does not silently block scene generation (which requires a source
+        // engine to be selected). The session dir was created just above, so
+        // the prefs file's parent directory exists.
+        self[\loadControlPrefs].value(self);
         "EAP RandomScenes: started with blank slots".postln;
     };
 
